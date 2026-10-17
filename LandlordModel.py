@@ -9,6 +9,7 @@ from douzero.dmc.models import model_dict_resnet
 import time
 from douzero.env.game import GameEnv
 from douzero.evaluation.deep_agent import DeepAgent
+from app_paths import WEIGHTS_DIR
 
 
 def EnvToOnehot(cards):
@@ -57,13 +58,14 @@ class Net(nn.Module):
 
 net = Net()
 net.eval()
-if os.path.exists("./weights/landlord_weights.pkl"):
+_WEIGHTS_PATH = WEIGHTS_DIR / "landlord_weights.pkl"
+if os.path.exists(_WEIGHTS_PATH):
     if torch.cuda.is_available():
-        net.load_state_dict(torch.load('./weights/landlord_weights.pkl'))
+        net.load_state_dict(torch.load(_WEIGHTS_PATH))
     else:
-        net.load_state_dict(torch.load('./weights/landlord_weights.pkl', map_location=torch.device("cpu")))
+        net.load_state_dict(torch.load(_WEIGHTS_PATH, map_location=torch.device("cpu")))
 else:
-    print("landlord_weights.pkl not found")
+    print("landlord_weights.pkl not found: {}".format(_WEIGHTS_PATH))
 
 
 def predict(cards):

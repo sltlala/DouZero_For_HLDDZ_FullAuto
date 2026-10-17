@@ -8,6 +8,8 @@ from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Dataset
 import time
 
+from app_paths import WEIGHTS_DIR
+
 
 def EnvToOnehot(cards):
     Env2IdxMap = {3: 0, 4: 1, 5: 2, 6: 3, 7: 4, 8: 5, 9: 6, 10: 7, 11: 8, 12: 9, 13: 10, 14: 11, 17: 12, 20: 13, 30: 14}
@@ -54,25 +56,17 @@ class Net(nn.Module):
 
 
 Nets = {"up": Net(), "down": Net(), "farmer": Net()}
-if os.path.exists("./weights/landlord_up_weights.pkl"):
+for _name, _net in Nets.items():
+    _weight_path = WEIGHTS_DIR / ("landlord_{}_weights.pkl".format(_name)
+                                  if _name in ("up", "down") else "farmer_weights.pkl")
+    if not os.path.exists(_weight_path):
+        print("FarmerModel 权重缺失: {}".format(_weight_path))
+        continue
     if torch.cuda.is_available():
-        Nets["up"].load_state_dict(torch.load("./weights/landlord_up_weights.pkl"))
+        _net.load_state_dict(torch.load(_weight_path))
     else:
-        Nets["up"].load_state_dict(torch.load("./weights/landlord_up_weights.pkl", map_location=torch.device("cpu")))
-    Nets["up"].eval()
-if os.path.exists("./weights/landlord_down_weights.pkl"):
-    if torch.cuda.is_available():
-        Nets["down"].load_state_dict(torch.load("./weights/landlord_down_weights.pkl"))
-    else:
-        Nets["down"].load_state_dict(
-            torch.load("./weights/landlord_down_weights.pkl", map_location=torch.device("cpu")))
-    Nets["down"].eval()
-if os.path.exists("./weights/farmer_weights.pkl"):
-    if torch.cuda.is_available():
-        Nets["farmer"].load_state_dict(torch.load("./weights/farmer_weights.pkl"))
-    else:
-        Nets["farmer"].load_state_dict(torch.load("./weights/farmer_weights.pkl", map_location=torch.device("cpu")))
-    Nets["farmer"].eval()
+        _net.load_state_dict(torch.load(_weight_path, map_location=torch.device("cpu")))
+    _net.eval()
 
 
 def predict(cards, type="up"):

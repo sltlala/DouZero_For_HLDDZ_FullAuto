@@ -23,21 +23,21 @@ from PyQt5 import QtGui, QtWidgets, QtCore
 from PyQt5.QtCore import QTime, QEventLoop
 from skimage.metrics import structural_similarity as ssim
 
+from app_paths import DATA_JSON, PICS_DIR, resource
+
 Pics = {}
 
 
 def read_json():
-    with open('data.json', 'r') as f:
+    with open(DATA_JSON, 'r', encoding='utf-8') as f:
         content = f.read()
         data = json.loads(content)
-        f.close()
     return data
 
 
 def write_json(data):
-    with open('data.json', 'w') as f:
-        json.dump(data, f)
-        f.close()
+    with open(DATA_JSON, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False)
 
 
 def compare_images(image1, image2):
@@ -156,11 +156,12 @@ class GameHelper:
         self.Interrupt = False
         self.RealRate = (1440, 810)
         self.GetZoomRate()
-        for file in os.listdir("./pics"):
+        for file in os.listdir(PICS_DIR):
             info = file.split(".")
-            if info[1] == "png":
-                tmpImage = Image.open("./pics/" + file)
-                imgCv = cv2.imread("./pics/" + file)
+            if len(info) > 1 and info[1] == "png":
+                pic_path = PICS_DIR / file
+                tmpImage = Image.open(pic_path)
+                imgCv = cv2.imread(str(pic_path))
                 self.Pics.update({info[0]: tmpImage})
                 self.PicsCV.update({info[0]: imgCv})
 

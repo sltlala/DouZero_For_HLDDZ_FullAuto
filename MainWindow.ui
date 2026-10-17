@@ -1168,124 +1168,6 @@ background:none;
       </widget>
      </widget>
     </widget>
-    <widget class="QScrollArea" name="scrollArea_10">
-     <property name="geometry">
-      <rect>
-       <x>370</x>
-       <y>60</y>
-       <width>101</width>
-       <height>91</height>
-      </rect>
-     </property>
-     <property name="widgetResizable">
-      <bool>true</bool>
-     </property>
-     <widget class="QWidget" name="scrollAreaWidgetContents_10">
-      <property name="geometry">
-       <rect>
-        <x>0</x>
-        <y>0</y>
-        <width>99</width>
-        <height>89</height>
-       </rect>
-      </property>
-      <widget class="QLabel" name="landlord_label_3">
-       <property name="geometry">
-        <rect>
-         <x>10</x>
-         <y>0</y>
-         <width>91</width>
-         <height>21</height>
-        </rect>
-       </property>
-       <property name="font">
-        <font>
-         <family>微软雅黑</family>
-         <pointsize>6</pointsize>
-         <weight>50</weight>
-         <italic>false</italic>
-         <bold>false</bold>
-        </font>
-       </property>
-       <property name="text">
-        <string>农民正常加倍</string>
-       </property>
-       <property name="alignment">
-        <set>Qt::AlignCenter</set>
-       </property>
-      </widget>
-      <widget class="QLabel" name="jiabei_label_6">
-       <property name="geometry">
-        <rect>
-         <x>0</x>
-         <y>60</y>
-         <width>41</width>
-         <height>21</height>
-        </rect>
-       </property>
-       <property name="font">
-        <font>
-         <family>微软雅黑</family>
-         <pointsize>6</pointsize>
-         <weight>50</weight>
-         <italic>false</italic>
-         <bold>false</bold>
-        </font>
-       </property>
-       <property name="text">
-        <string>加倍:</string>
-       </property>
-       <property name="alignment">
-        <set>Qt::AlignCenter</set>
-       </property>
-      </widget>
-      <widget class="QLineEdit" name="jiabei_lineEdit_5">
-       <property name="geometry">
-        <rect>
-         <x>40</x>
-         <y>30</y>
-         <width>51</width>
-         <height>21</height>
-        </rect>
-       </property>
-      </widget>
-      <widget class="QLineEdit" name="jiabei_lineEdit_6">
-       <property name="geometry">
-        <rect>
-         <x>40</x>
-         <y>60</y>
-         <width>51</width>
-         <height>21</height>
-        </rect>
-       </property>
-      </widget>
-      <widget class="QLabel" name="jiabei_label_5">
-       <property name="geometry">
-        <rect>
-         <x>0</x>
-         <y>30</y>
-         <width>41</width>
-         <height>21</height>
-        </rect>
-       </property>
-       <property name="font">
-        <font>
-         <family>微软雅黑</family>
-         <pointsize>6</pointsize>
-         <weight>50</weight>
-         <italic>false</italic>
-         <bold>false</bold>
-        </font>
-       </property>
-       <property name="text">
-        <string>超加:</string>
-       </property>
-       <property name="alignment">
-        <set>Qt::AlignCenter</set>
-       </property>
-      </widget>
-     </widget>
-    </widget>
     <widget class="QScrollArea" name="scrollArea_11">
      <property name="geometry">
       <rect>
@@ -1346,7 +1228,7 @@ background:none;
         </font>
        </property>
        <property name="text">
-        <string>地主怂了，我准备加倍</string>
+        <string>农民加倍</string>
        </property>
        <property name="alignment">
         <set>Qt::AlignCenter</set>

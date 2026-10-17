@@ -6,6 +6,7 @@
 
 import GameHelper as gh
 from GameHelper import GameHelper, play_sound, read_json, write_json
+from app_paths import BASELINES_DIR, MUSIC_DIR, STYLE_QSS
 import sys
 import json
 import time
@@ -20,7 +21,7 @@ from PyQt5.QtGui import QKeyEvent, QIcon
 from PyQt5.QtCore import QTime, QEventLoop, Qt, QFile, QTextStream, pyqtSignal, QThread
 from MainWindow import Ui_Form
 
-from douzero.env.game import GameEnv
+from douzero.env.game import GameEnv, EnvCard2RealCard, RealCard2EnvCard, AllEnvCard, bombs
 from douzero.evaluation.deep_agent import DeepAgent
 import traceback
 from skimage.metrics import structural_similarity as ssim
@@ -31,20 +32,9 @@ import FarmerModel
 
 helper = GameHelper()
 
-EnvCard2RealCard = {3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: 'T', 11: 'J', 12: 'Q',
-                    13: 'K', 14: 'A', 17: '2', 20: 'X', 30: 'D'}
-
-RealCard2EnvCard = {'3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, 'T': 10, 'J': 11, 'Q': 12,
-                    'K': 13, 'A': 14, '2': 17, 'X': 20, 'D': 30}
-
-bombs = [[3, 3, 3, 3], [4, 4, 4, 4], [5, 5, 5, 5], [6, 6, 6, 6], [7, 7, 7, 7], [8, 8, 8, 8], [9, 9, 9, 9],
-         [10, 10, 10, 10], [11, 11, 11, 11], [12, 12, 12, 12], [13, 13, 13, 13], [14, 14, 14, 14], [17, 17, 17, 17],
-         [20, 30]]
-
+# 牌面整数 <-> 真实字符、整副牌、炸弹表统一来自 douzero.env.game（原本这里各复制了一份，
+# 一旦某处改了顺序/映射就会与引擎不一致）。这里只保留界面记牌器需要的显示顺序。
 AllCards = ['D', 'X', '2', 'A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3']
-
-AllEnvCard = [3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 10,
-              11, 11, 11, 11, 12, 12, 12, 12, 13, 13, 13, 13, 14, 14, 14, 14, 17, 17, 17, 17, 20, 30]
 
 
 def cards_filter(location, distance):  # 牌检测结果滤波
@@ -143,12 +133,10 @@ class Worker(QThread):
     left_cards_display = pyqtSignal(str)  # 显示上家的牌
     right_cards_display = pyqtSignal(str)  # 显示下家的牌
     recorder_display = pyqtSignal(str)  # 记牌器
-    write_threshold = pyqtSignal(int)  # 阈值写入json
 
     def __init__(self):
         super(Worker, self).__init__()
         self.MingpaiThreshold = None
-        self.FarmerJiabeiThresholdLow = None
         self.FarmerJiabeiThreshold = None
         self.JiabeiThreshold = None
         self.BidThresholds = None
@@ -161,12 +149,12 @@ class Worker(QThread):
         self.initial_mingpai = None
         self.initial_multiply = None
         self.initial_cards = None
-        self.RunGame = None
+        self.RunGame = False
         self.initial_bid_rate = None
         self.initial_model_rate = None
         self.other_hands_cards_str = None
-        self.stop_sign = None
-        self.loop_sign = None
+        self.stop_sign = False
+        self.loop_sign = True
         self.env = None
         self.three_cards_env = None
         self.three_cards_real = None
@@ -197,11 +185,11 @@ class Worker(QThread):
         self.blue_cards_num = [(273, 388, 33, 42), (1117, 387, 33, 44)]  # 加倍阶段上家和下家的牌数显示区域
 
         self.model_path_dict = {
-            'landlord': "baselines/resnet/resnet_landlord.ckpt",
-            'landlord_up': "baselines/resnet/resnet_landlord_up.ckpt",
-            'landlord_down': "baselines/resnet/resnet_landlord_down.ckpt"
+            'landlord': str(BASELINES_DIR / "resnet" / "resnet_landlord.ckpt"),
+            'landlord_up': str(BASELINES_DIR / "resnet" / "resnet_landlord_up.ckpt"),
+            'landlord_down': str(BASELINES_DIR / "resnet" / "resnet_landlord_down.ckpt")
         }
-        LandlordModel.init_model("baselines/resnet/resnet_landlord.ckpt")
+        LandlordModel.init_model(self.model_path_dict['landlord'])
 
     def run(self):
         if self.auto_sign:
@@ -219,15 +207,15 @@ class Worker(QThread):
             time.sleep(2)
 
     def run_threshold(self):
-        self.write_threshold.emit(1)
-        time.sleep(0.1)
+        # 阈值已由主线程在点击「手动/自动」时写盘（MyPyQT_Form.write_threshold），
+        # 这里直接读文件即可。旧实现是 emit 信号 + sleep(0.1) 的跨线程握手，
+        # 主线程恰好繁忙时 worker 会读到上一次的旧阈值。
         data = read_json()
 
         self.BidThresholds = [float(data['bid1']), float(data['bid2']), float(data['bid3'])]
         self.JiabeiThreshold = (
             (float(data['jiabei1']), float(data['jiabei2'])), (float(data['jiabei3']), float(data['jiabei4'])))
-        self.FarmerJiabeiThreshold = (float(data['jiabei5']), float(data['jiabei6']))
-        self.FarmerJiabeiThresholdLow = (float(data['jiabei7']), float(data['jiabei8']))
+        self.FarmerJiabeiThreshold = (float(data['jiabei7']), float(data['jiabei8']))
         self.MingpaiThreshold = float(data['mingpai'])
 
     def detect_start_btn(self):
@@ -366,7 +354,8 @@ class Worker(QThread):
             print("加倍阶段有问题")
 
     def choose_multiples_stage(self):
-        global win_rate, initialBeishu, cards_str
+        # 旧代码这里还声明了 never-assigned 的 initialBeishu，一旦被读取就是 NameError
+        global win_rate, cards_str
         self.initial_multiply = 0
         self.initial_mingpai = 0
         self.initial_bid_rate = 0
@@ -483,6 +472,8 @@ class Worker(QThread):
                         if len(cards_str) == 20:
                             JiabeiThreshold = self.JiabeiThreshold[is_stolen]
                         else:
+                            # 农民只有一套加倍阈值（jiabei7/jiabei8）。
+                            # 旧代码先赋 jiabei5/6 再用 jiabei7/8 覆盖，前者永不生效，已删除。
                             JiabeiThreshold = self.FarmerJiabeiThreshold
 
                         if len(cards_str) == 17:
@@ -491,10 +482,6 @@ class Worker(QThread):
                         else:
                             time.sleep(2)
                             print("休息 2 秒, 观察他人加倍情况")
-                        #  识别加倍数
-
-                        if len(cards_str) == 17:
-                            JiabeiThreshold = self.FarmerJiabeiThresholdLow
 
                         if win_rate > JiabeiThreshold[0]:
                             chaojijiabei_btn = helper.LocateOnScreen("chaojijiabei_btn", region=self.GeneralBtnPos)
@@ -857,7 +844,7 @@ class Worker(QThread):
 
                     if not self.auto_sign:
                         print("现在是手动模式，请手动出牌")
-                        play_sound("music/1.wav")
+                        play_sound(str(MUSIC_DIR / "1.wav"))
                         if action_message["action"] == "":
                             self.pre_cards_display.emit("推荐：pass")
                         else:
@@ -1237,7 +1224,7 @@ class MyPyQT_Form(QtWidgets.QWidget, Ui_Form):
                             QtCore.Qt.WindowCloseButtonHint)
         self.setWindowIcon(QIcon(':/pics/favicon.ico'))
         self.setWindowTitle("DouZero欢乐斗地主  v5.7")
-        play_sound("music/2.wav")
+        play_sound(str(MUSIC_DIR / "2.wav"))
         self.setFixedSize(self.width(), self.height())  # 固定窗体大小
         self.move(20, 20)
         window_pale = QtGui.QPalette()
@@ -1253,7 +1240,6 @@ class MyPyQT_Form(QtWidgets.QWidget, Ui_Form):
         self.read_threshold()
         self.Players = [self.RPlayedCard, self.PredictedCard, self.LPlayedCard]
         self.thread = Worker()
-        self.thread.change_mode = False
         self.ClassicsButton.setStyleSheet('background-color: rgba(255, 170, 0, 0.5);')
         self.thread.auto_game.connect(self.auto_game)
         self.thread.hand_game.connect(self.hand_game)
@@ -1269,16 +1255,17 @@ class MyPyQT_Form(QtWidgets.QWidget, Ui_Form):
         self.thread.left_cards_display.connect(self.left_cards_display)
         self.thread.right_cards_display.connect(self.right_cards_display)
         self.thread.recorder_display.connect(self.cards_recorder)
-        self.thread.write_threshold.connect(self.write_threshold)
 
     def hand_game(self, result):
         self.thread.auto_sign = False
+        self.write_threshold(None)  # 先把界面阈值落盘，再启动 worker（消除旧版的跨线程握手竞态）
         self.thread.start()
         self.AutoButton.setStyleSheet('background-color: none;')
         self.HandButton.setStyleSheet('background-color: rgba(255, 85, 255, 0.5);')
 
     def auto_game(self, result):
         self.thread.auto_sign = True
+        self.write_threshold(None)
         self.thread.start()
 
         self.AutoButton.setStyleSheet('background-color: rgba(255, 85, 255, 0.5);')
@@ -1287,7 +1274,15 @@ class MyPyQT_Form(QtWidgets.QWidget, Ui_Form):
     def stop(self, result):
         print()
         print("停止线程")
-        self.thread.terminate()
+        # 先请求协作式退出（worker 的循环都在检查 stop_sign / RunGame），
+        # 只有在 1 秒内还没退出时才强杀，避免 QThread.terminate() 把
+        # 正在跑的推理/截图硬切断。
+        self.thread.stop_sign = True
+        self.thread.RunGame = False
+        if not self.thread.wait(1000):
+            print("线程未响应，强制终止")
+            self.thread.terminate()
+            self.thread.wait(1000)
         self.init_interface(1)
         self.AutoButton.setStyleSheet('background-color: none;')
         self.HandButton.setStyleSheet('background-color: none;')
@@ -1305,8 +1300,6 @@ class MyPyQT_Form(QtWidgets.QWidget, Ui_Form):
         self.jiabei_lineEdit_2.setText("0.4")
         self.jiabei_lineEdit_3.setText("0.6")
         self.jiabei_lineEdit_4.setText("0.5")
-        self.jiabei_lineEdit_5.setText("1.3")
-        self.jiabei_lineEdit_6.setText("1.1")
         self.jiabei_lineEdit_7.setText("1.2")
         self.jiabei_lineEdit_8.setText("1.0")
         self.mingpai_lineEdit.setText("1.5")
@@ -1314,8 +1307,8 @@ class MyPyQT_Form(QtWidgets.QWidget, Ui_Form):
         data = {'bid1': self.bid_lineEdit_1.text(), 'bid2': self.bid_lineEdit_2.text(),
                 'bid3': self.bid_lineEdit_3.text(), 'jiabei1': self.jiabei_lineEdit_1.text(),
                 'jiabei2': self.jiabei_lineEdit_2.text(), 'jiabei3': self.jiabei_lineEdit_3.text(),
-                'jiabei4': self.jiabei_lineEdit_4.text(), 'jiabei5': self.jiabei_lineEdit_5.text(),
-                'jiabei6': self.jiabei_lineEdit_6.text(), 'jiabei7': self.jiabei_lineEdit_7.text(),
+                'jiabei4': self.jiabei_lineEdit_4.text(),
+                'jiabei7': self.jiabei_lineEdit_7.text(),
                 'jiabei8': self.jiabei_lineEdit_8.text(), 'mingpai': self.mingpai_lineEdit.text()}
         write_json(data)
 
@@ -1323,8 +1316,8 @@ class MyPyQT_Form(QtWidgets.QWidget, Ui_Form):
         data = {'bid1': self.bid_lineEdit_1.text(), 'bid2': self.bid_lineEdit_2.text(),
                 'bid3': self.bid_lineEdit_3.text(), 'jiabei1': self.jiabei_lineEdit_1.text(),
                 'jiabei2': self.jiabei_lineEdit_2.text(), 'jiabei3': self.jiabei_lineEdit_3.text(),
-                'jiabei4': self.jiabei_lineEdit_4.text(), 'jiabei5': self.jiabei_lineEdit_5.text(),
-                'jiabei6': self.jiabei_lineEdit_6.text(), 'jiabei7': self.jiabei_lineEdit_7.text(),
+                'jiabei4': self.jiabei_lineEdit_4.text(),
+                'jiabei7': self.jiabei_lineEdit_7.text(),
                 'jiabei8': self.jiabei_lineEdit_8.text(), 'mingpai': self.mingpai_lineEdit.text()}
         write_json(data)
 
@@ -1337,8 +1330,6 @@ class MyPyQT_Form(QtWidgets.QWidget, Ui_Form):
         self.jiabei_lineEdit_2.setText(data['jiabei2'])
         self.jiabei_lineEdit_3.setText(data['jiabei3'])
         self.jiabei_lineEdit_4.setText(data['jiabei4'])
-        self.jiabei_lineEdit_5.setText(data['jiabei5'])
-        self.jiabei_lineEdit_6.setText(data['jiabei6'])
         self.jiabei_lineEdit_7.setText(data['jiabei7'])
         self.jiabei_lineEdit_8.setText(data['jiabei8'])
         self.mingpai_lineEdit.setText(data['mingpai'])
@@ -1408,12 +1399,22 @@ class MyPyQT_Form(QtWidgets.QWidget, Ui_Form):
             self.tableWidget.setItem(0, i, newItem)
 
 
-if __name__ == '__main__':
+def main():
+    """程序入口（pyproject.toml 里注册为 gui-script: douzero-hlddz）。"""
     app = QtWidgets.QApplication(sys.argv)
-    main = MyPyQT_Form()
-    style_file = QFile("style.qss")
-    stream = QTextStream(style_file)
-    style_sheet = stream.readAll()
-    main.setStyleSheet(style_sheet)
-    main.show()
-    sys.exit(app.exec_())
+    window = MyPyQT_Form()
+    # 旧代码没有 open() 就直接 readAll()，Qt 会报 "device not open"，样式表永远是空的
+    style_file = QFile(str(STYLE_QSS))
+    if style_file.open(QFile.ReadOnly):
+        stream = QTextStream(style_file)
+        style_sheet = stream.readAll()
+        window.setStyleSheet(style_sheet)
+        style_file.close()
+    else:
+        print("样式表未找到或被占用: {}".format(STYLE_QSS))
+    window.show()
+    return app.exec_()
+
+
+if __name__ == '__main__':
+    sys.exit(main())

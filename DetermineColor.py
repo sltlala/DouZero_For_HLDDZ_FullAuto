@@ -137,8 +137,10 @@ class ColorClassify(object):
 
 
 if __name__ == "__main__":
+    from app_paths import PICS_DIR
+
     classifier = ColorClassify(debug=True)
-    img = cv2.imread("pics/ob8.png")
+    img = cv2.imread(str(PICS_DIR / "o8.png"))
     result = classifier.classify(img)
     print(result)
     cls, score = result[1]

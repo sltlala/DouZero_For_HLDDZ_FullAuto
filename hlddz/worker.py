@@ -436,6 +436,24 @@ class Worker(QThread):
                         qiangdizhu_btn = helper.LocateOnScreen("qiangdizhu_btn", region=self.GeneralBtnPos)
                         jiabei_btn = helper.LocateOnScreen("jiabei_btn", region=self.GeneralBtnPos)
                         self.detect_start_btn()
+                        # 模板全不相符（本机按钮外观与 pics/ 旧图不一致）时，
+                        # 用“按钮排布 + 底牌是否亮出”判断当前阶段，再走原有分支：
+                        #   底牌已亮 3 张 → 加倍阶段
+                        #   已经叫过地主   → 抢地主阶段
+                        #   其余           → 叫地主阶段
+                        if jiaodizhu_btn is None and qiangdizhu_btn is None and jiabei_btn is None:
+                            boxes = self.find_action_buttons()
+                            if boxes:
+                                if len(self.find_three_cards()) == 3:
+                                    jiabei_btn = boxes[0]
+                                    print("\n（按按钮位置判断：加倍阶段）")
+                                elif have_bid:
+                                    qiangdizhu_btn = boxes[0]
+                                    print("\n（按按钮位置判断：抢地主阶段）")
+                                else:
+                                    jiaodizhu_btn = boxes[0]
+                                    print("\n（按按钮位置判断：叫地主阶段）")
+                                break
                         # 等这么久还没有按钮：打印按钮区域的实际匹配分并存图，便于定位
                         if not bid_diag_done and time.time() - bid_wait_start > 10:
                             bid_diag_done = True
@@ -1305,13 +1323,44 @@ class Worker(QThread):
         except Exception:
             return []
 
-    def click_button_by_layout(self, index):
-        """按按钮排布顺序点击：0=出牌/叫地主，1=不出/不叫，2=提示。"""
+    def click_button_by_layout(self, index, template=None):
+        """按按钮排布点击：0=出牌/叫地主，1=不出/不叫，2=提示。
+
+        若给了 template，则在检出的按钮里挑**与该模板相关性最高**的那个
+        （本机模板绝对分只有 0.3~0.5，但排序往往仍然有效），
+        相关性都太低时退回按位置的 index。
+        """
         boxes = self.find_action_buttons()
         if not boxes:
             return False
-        idx = min(max(index, 0), len(boxes) - 1)
-        x, y, w, h = boxes[idx]
+        target = None
+        if template:
+            try:
+                img, _ = helper.Screenshot()
+                bgr = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
+                tpl = helper.PicsCV.get(template)
+                best = (-9.0, None)
+                if tpl is not None:
+                    for b in boxes:
+                        x, y, w, h = b
+                        patch = bgr[y:y + h, x:x + w]
+                        if patch.size == 0 or patch.shape[0] < tpl.shape[0] or patch.shape[1] < tpl.shape[1]:
+                            continue
+                        res = cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED)
+                        score = float(res.max())
+                        if score > best[0]:
+                            best = (score, b)
+                if best[1] is not None and best[0] >= 0.30:
+                    target = best[1]
+                    print("（按钮相关性 %.3f → 选 x=%d）" % (best[0], target[0]))
+            except Exception:
+                target = None
+        if target is None:
+            idx = min(max(index, 0), len(boxes) - 1)
+            target = boxes[idx]
+        x, y, w, h = target
+        print("   点击按钮: x=%d y=%d %dx%d → 点 (%d,%d)"
+              % (x, y, w, h, x + w // 2, y + h // 2))
         helper.LeftClick2((x + w // 2, y + h // 2))
         return True
 
@@ -1328,8 +1377,8 @@ class Worker(QThread):
                 return True
         except Exception:
             pass
-        if self.click_button_by_layout(0 if positive else 1):
-            print("（按钮模板未匹配，按位置点击：%s）" % ("左" if positive else "中"))
+        if self.click_button_by_layout(0 if positive else 1, template=template):
+            print("  （模板 %s 未匹配，按按钮位置点击）" % template)
             return True
         return False
 

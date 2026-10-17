@@ -421,6 +421,10 @@ class Worker(QThread):
                 bid_wait_start = time.time()
                 last_phase_check = bid_wait_start
                 bid_diag_done = False
+                # 每个阶段只处理一次：按钮没消失时会反复检出同一阶段，
+                # 旧逻辑会无限重复点「抢地主」（实测刷屏几十次）。
+                bid_acted = False
+                double_acted = False
                 while self.RunGame and self.auto_sign:
                     outterBreak = False
                     jiaodizhu_btn = helper.LocateOnScreen("jiaodizhu_btn", region=self.GeneralBtnPos)
@@ -438,22 +442,31 @@ class Worker(QThread):
                         self.detect_start_btn()
                         # 模板全不相符（本机按钮外观与 pics/ 旧图不一致）时，
                         # 用“按钮排布 + 底牌是否亮出”判断当前阶段，再走原有分支：
-                        #   底牌已亮 3 张 → 加倍阶段
-                        #   已经叫过地主   → 抢地主阶段
-                        #   其余           → 叫地主阶段
+                        #   底牌已亮 3 张 → 加倍阶段（未处理过才处理）
+                        #   还没叫过       → 叫地主阶段
+                        #   叫过还未抢     → 抢地主阶段
+                        #   都处理过了     → 等按钮消失，超时则跳过
                         if jiaodizhu_btn is None and qiangdizhu_btn is None and jiabei_btn is None:
                             boxes = self.find_action_buttons()
                             if boxes:
                                 if len(self.find_three_cards()) == 3:
-                                    jiabei_btn = boxes[0]
-                                    print("\n（按按钮位置判断：加倍阶段）")
-                                elif have_bid:
-                                    qiangdizhu_btn = boxes[0]
-                                    print("\n（按按钮位置判断：抢地主阶段）")
-                                else:
-                                    jiaodizhu_btn = boxes[0]
-                                    print("\n（按按钮位置判断：叫地主阶段）")
-                                break
+                                    if not double_acted:
+                                        jiabei_btn = boxes[0]
+                                        print("\n（按按钮位置判断：加倍阶段）")
+                                elif not bid_acted:
+                                    if have_bid:
+                                        qiangdizhu_btn = boxes[0]
+                                        print("\n（按按钮位置判断：抢地主阶段）")
+                                    else:
+                                        jiaodizhu_btn = boxes[0]
+                                        print("\n（按按钮位置判断：叫地主阶段）")
+                                if jiaodizhu_btn is not None or qiangdizhu_btn is not None or jiabei_btn is not None:
+                                    break
+                                # 该阶段已经点过，按钮却还在：先等它消失，等不到就跳过
+                                if time.time() - bid_wait_start > 8:
+                                    print("\n叫牌/加倍已处理完但按钮仍在，跳过该阶段")
+                                    outterBreak = True
+                                    break
                         # 等这么久还没有按钮：打印按钮区域的实际匹配分并存图，便于定位
                         if not bid_diag_done and time.time() - bid_wait_start > 10:
                             bid_diag_done = True
@@ -486,6 +499,7 @@ class Worker(QThread):
 
                         if jiaodizhu_btn is not None:
                             have_bid = True
+                            bid_acted = True
                             if win_rate > self.BidThresholds[0]:
                                 self.click_action("jiaodizhu_btn", True, self.GeneralBtnPos)
                                 print("\n叫地主")
@@ -493,8 +507,10 @@ class Worker(QThread):
                             else:
                                 self.click_action("bujiao_btn", False, self.GeneralBtnPos)
                                 print("\n不叫地主")
+                            self._wait_buttons_gone()
                         elif qiangdizhu_btn is not None:
                             is_stolen = 1
+                            bid_acted = True
                             if have_bid:
                                 threshold_index = 1
                             else:
@@ -506,6 +522,7 @@ class Worker(QThread):
                                 self.click_action("buqiang_btn", False, self.GeneralBtnPos)
                                 print("\n不抢地主")
                             have_bid = True
+                            self._wait_buttons_gone()
 
                     else:
                         self.state_display.emit("加倍阶段")
@@ -573,6 +590,7 @@ class Worker(QThread):
                             print("不加倍")
                             self.click_action("bujiabei_btn", False, self.GeneralBtnPos)
                             self.initial_multiply = 0
+                        double_acted = True
                         break
                     self.detect_start_btn()
                     if outterBreak:
@@ -1380,6 +1398,16 @@ class Worker(QThread):
         if self.click_button_by_layout(0 if positive else 1, template=template):
             print("  （模板 %s 未匹配，按按钮位置点击）" % template)
             return True
+        return False
+
+    def _wait_buttons_gone(self, timeout=4.0):
+        """点击动作按钮后等它消失，避免同一阶段被反复检出、反复点击。"""
+        start = time.time()
+        while time.time() - start < timeout:
+            if not self.find_action_buttons():
+                return True
+            time.sleep(0.2)
+        print("（按钮仍然存在，可能这次点击没生效）")
         return False
 
     def _my_turn_by_buttons(self, min_interval=1.0):

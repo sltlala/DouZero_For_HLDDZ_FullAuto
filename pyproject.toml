@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "douzero-hlddz"
+version = "5.7.0"
+description = "将 DouZero 强化学习斗地主 AI 用于《欢乐斗地主》全自动对局（自动叫牌 / 加倍 / 出牌）"
+readme = "README.md"
+requires-python = ">=3.8,<3.12"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Vincentzyx" },
+    { name = "girgle" },
+]
+keywords = ["douzero", "doudizhu", "landlord", "reinforcement-learning", "automation", "pyqt5"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Games/Entertainment :: Board Games",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# 运行期依赖。原 requirements.txt 里的 `~=` 语义等价于 `>=x,<x+1`，这里写成显式区间：
+#   `pywin32~=306` 这种只有一段版本号的兼容release写法会被新版 pip / packaging 判为非法。
+dependencies = [
+    "matplotlib>=3.7.3,<3.8",
+    "numpy>=1.23.5,<1.24",
+    "Pillow>=10.2,<11",
+    "PyAutoGUI>=0.9.54,<0.10",
+    "pygame>=2.5.2,<2.6",
+    "pywin32>=306,<307; sys_platform == 'win32'",
+    "rlcard>=1.2.0,<1.3",
+    "torch>=2.0.1,<2.1",
+    "opencv-python>=4.9.0.80,<4.10",
+    "PyQt5>=5.15.9,<5.16",
+    "scikit-image>=0.21.0,<0.22",
+]
+
+[project.optional-dependencies]
+# 训练时想把 git commit 记进日志就装它（未安装时 FileWriter 会自动降级）
+train = ["gitpython>=3.1"]
+dev = ["pytest>=7.4"]
+
+[project.gui-scripts]
+# 等价于 `python mian.py`（必须在项目根目录启动，程序用相对路径读 data.json / pics / music）
+douzero-hlddz = "mian:main"
+
+[tool.setuptools]
+# 平铺布局：根目录下的脚本按模块打包，douzero 是唯一的包
+py-modules = [
+    "mian",
+    "app_paths",
+    "GameHelper",
+    "DetermineColor",
+    "BidModel",
+    "FarmerModel",
+    "LandlordModel",
+    "search_utility",
+    "MainWindow",
+    "picture_rc",
+]
+
+[tool.setuptools.packages.find]
+include = ["douzero", "douzero.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

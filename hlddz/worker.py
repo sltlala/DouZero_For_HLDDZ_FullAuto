@@ -384,7 +384,9 @@ class Worker(QThread):
             self.RunGame = True
             self.choose_multiples_stage()
         except Exception as e:
-            print("加倍阶段有问题")
+            # 打印堆栈，否则“加倍阶段有问题”完全没法定位
+            print("加倍阶段有问题: %s" % e)
+            traceback.print_exc()
 
     def choose_multiples_stage(self):
         # 旧代码这里还声明了 never-assigned 的 initialBeishu，一旦被读取就是 NameError
@@ -418,6 +420,7 @@ class Worker(QThread):
 
                 bid_wait_start = time.time()
                 last_phase_check = bid_wait_start
+                bid_diag_done = False
                 while self.RunGame and self.auto_sign:
                     outterBreak = False
                     jiaodizhu_btn = helper.LocateOnScreen("jiaodizhu_btn", region=self.GeneralBtnPos)
@@ -433,6 +436,10 @@ class Worker(QThread):
                         qiangdizhu_btn = helper.LocateOnScreen("qiangdizhu_btn", region=self.GeneralBtnPos)
                         jiabei_btn = helper.LocateOnScreen("jiabei_btn", region=self.GeneralBtnPos)
                         self.detect_start_btn()
+                        # 等这么久还没有按钮：打印按钮区域的实际匹配分并存图，便于定位
+                        if not bid_diag_done and time.time() - bid_wait_start > 10:
+                            bid_diag_done = True
+                            self._diag_buttons()
                         # 中途接管时叫牌/加倍阶段可能已经过去：按钮永远不会出现，
                         # 若此时底牌已经亮出（3 张），直接进入出牌阶段，避免死等。
                         if time.time() - bid_wait_start > 20 and time.time() - last_phase_check > 2:
@@ -828,6 +835,8 @@ class Worker(QThread):
                             pass_btn = helper.LocateOnScreen("pass_btn", region=self.PassBtnPos, confidence=0.7)
                             yaobuqi = helper.LocateOnScreen("yaobuqi", region=self.GeneralBtnPos, confidence=0.7)
                             buchu = helper.LocateOnScreen("buchu", region=self.MPassPos)
+                            pass_wait_start = time.time()
+                            pass_diag_done = False
                             while pass_btn is None and yaobuqi is None and buchu is None:
                                 if not self.RunGame or not self.auto_sign:
                                     break
@@ -835,6 +844,12 @@ class Worker(QThread):
                                 yaobuqi = helper.LocateOnScreen("yaobuqi", region=self.GeneralBtnPos, confidence=0.7)
                                 buchu = helper.LocateOnScreen("buchu", region=self.MPassPos)
                                 self.detect_start_btn()
+                                if not pass_diag_done and time.time() - pass_wait_start > 10:
+                                    pass_diag_done = True
+                                    print("\n[提示] 找不到「不出/要不起」按钮：本机按钮外观与 pics/ 模板不符，"
+                                          "请用 `python tools/grab_template.py pass_btn` 重新采集模板")
+                                    self._diag_buttons()
+                                    self.save_debug_shot("pass_wait")
 
                             if not self.my_pass_sign:
                                 if pass_btn is not None:
@@ -851,12 +866,20 @@ class Worker(QThread):
                         else:
                             self.click_cards(action_message["action"])
                             play_card = helper.LocateOnScreen("play_card", region=self.PassBtnPos, confidence=0.7)
+                            play_wait_start = time.time()
+                            play_diag_done = False
                             while play_card is None:
                                 if not self.RunGame or not self.auto_sign:
                                     break
                                 time.sleep(0.2)
                                 play_card = helper.LocateOnScreen("play_card", region=self.PassBtnPos, confidence=0.7)
                                 self.detect_start_btn()
+                                if not play_diag_done and time.time() - play_wait_start > 10:
+                                    play_diag_done = True
+                                    print("\n[提示] 找不到「出牌」按钮：本机按钮外观与 pics/ 模板不符，"
+                                          "请用 `python tools/grab_template.py play_card 150 52` 重新采集模板")
+                                    self._diag_buttons()
+                                    self.save_debug_shot("play_wait")
                             if first_run:
                                 time.sleep(0.5)
                             try:
@@ -1199,6 +1222,29 @@ class Worker(QThread):
         img = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
         other_cards_real = self.find_cards(img, pos, mark="c")
         return other_cards_real
+
+    def _diag_buttons(self):
+        """等待叫牌/加倍按钮超时时打印现场信息（区域统计 + 各按钮模板分 + 存图）。"""
+        try:
+            img, _ = helper.Screenshot()
+            if img is None:
+                print("\n[诊断] 截图失败")
+                return
+            bgr = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
+            x0, y0, w0, h0 = self.GeneralBtnPos
+            crop = bgr[y0:y0 + h0, x0:x0 + w0]
+            print("\n[诊断] 按钮区域 %s mean=%.1f std=%.1f"
+                  % (self.GeneralBtnPos, crop.mean(), crop.std()))
+            for name in ("jiaodizhu_btn", "bujiao_btn", "qiangdizhu_btn",
+                         "buqiang_btn", "jiabei_btn", "bujiabei_btn"):
+                tpl = helper.PicsCV.get(name)
+                if tpl is None or tpl.shape[0] >= crop.shape[0] or tpl.shape[1] >= crop.shape[1]:
+                    continue
+                res = cv2.matchTemplate(crop, tpl, cv2.TM_CCOEFF_NORMED)
+                print("   %-16s %.3f @ %s" % (name, float(res.max()), cv2.minMaxLoc(res)[3]))
+            self.save_debug_shot("bid_wait")
+        except Exception as e:
+            print("\n[诊断] 失败: %s" % e)
 
     def find_three_cards(self):
         """识别三张底牌。

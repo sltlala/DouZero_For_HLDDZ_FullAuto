@@ -2,3 +2,15 @@ __pycache__/
 *.py[cod]
 *$py.class
 .idea/
+.DS_Store
+
+# 虚拟环境 / 构建产物
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+
+# 训练产物（体积大，不入库）
+douzero_checkpoints/

@@ -881,7 +881,11 @@ class Worker(QThread):
                 if len(cards) > 0:
                     time.sleep(0.5)
                     cards = self.find_played_cards(self.MPlayedCardsPos)
-                if len(cards) == 0:
+                # 是否轮到我，以「出牌/不出/提示」按钮是否出现为准。
+                # 只看“我的出牌区有没有牌”会误判：上一手的牌还留在画面上，
+                # 轮到我时被当成“已经出过牌”而一直跳过（用户实测过）。
+                my_turn = self._my_turn_by_buttons(min_interval=0.5)
+                if my_turn:
 
                     action_message, action_list = self.env.step(self.user_position, update=False)
                     score = float(action_message['win_rate'])
@@ -1103,8 +1107,9 @@ class Worker(QThread):
                     time.sleep(0.5)
                     self.play_order = 1
                 else:
-                    print("已经出过牌")
-                    time.sleep(0.5)
+                    if len(cards) > 0:
+                        print("已经出过牌")
+                    time.sleep(0.3)
                     self.play_order = 1
                 first_run = False
                 self.detect_start_btn()

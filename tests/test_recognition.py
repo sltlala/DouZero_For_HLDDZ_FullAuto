@@ -109,6 +109,26 @@ def test_detail_positions_are_in_canvas_coordinates():
     assert 385 <= detail[1][1] <= 397
 
 
+def test_two_row_cards_are_all_counted():
+    """对面出长顺子时牌会排成两排，两排都要数出来。
+
+    只按 x 聚类会把上下两排同 x 位置的牌并成一张（用户实测过这个问题）。
+    """
+    w = _worker_without_init()
+    import mian  # noqa: F401  确保 helper/模板已加载
+
+    canvas = np.full((810, 1440, 3), (30, 110, 60), np.uint8)
+    rows = [(345, 300, ["3", "4", "5"]), (345, 345, ["6", "7"])]
+    for x0, y0, cards in rows:
+        for i, c in enumerate(cards):
+            tpl = cv2.imread(str(PICS_DIR / ("m%s.png" % c)))
+            y, x = y0, x0 + i * 46
+            canvas[y:y + tpl.shape[0], x:x + tpl.shape[1]] = tpl
+
+    got = w.find_cards(canvas, (300, 280, 400, 120), mark="m")
+    assert got == "34567", got
+
+
 def test_multiscale_finds_small_bottom_cards():
     """底牌比手牌小，用 z 的多尺度匹配应能找到缩放到 0.5 的牌。"""
     w = _worker_without_init()

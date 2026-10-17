@@ -163,9 +163,11 @@ class Worker(QThread):
         self.distance = 30
 
         self.MyHandCardsPos = (180, 560, 1050, 90)  # 我的截图区域
-        self.LPlayedCardsPos = (320, 280, 400, 120)  # 左边出牌截图区域
-        self.RPlayedCardsPos = (720, 280, 400, 120)  # 右边出牌截图区域
-        self.MPlayedCardsPos = (300, 350, 800, 100)  # 我的出牌截图区域
+        # 出牌区放高一些：长顺子/连对在一排放不下时游戏会排成两排，
+        # 区域太矮会直接切掉第二排（表现为对面牌多时识别不对）
+        self.LPlayedCardsPos = (320, 265, 400, 155)  # 左边出牌截图区域
+        self.RPlayedCardsPos = (720, 265, 400, 155)  # 右边出牌截图区域
+        self.MPlayedCardsPos = (300, 335, 800, 130)  # 我的出牌截图区域
 
         self.LandlordCardsPos = (600, 33, 220, 103)  # 地主底牌截图区域
         self.LPassPos = (360, 360, 120, 80)  # 左边不出截图区域
@@ -1224,18 +1226,31 @@ class Worker(QThread):
         if not hits:
             return []
 
-        hits.sort(key=lambda h: h[0])
-        clusters = []
-        last_x = None
+        # 先按 y 分行（长顺子/连对在一行放不下时游戏会排成两排），
+        # 再在每一行内按 x 聚类。只按 x 聚类会把上下两排同位置的牌并成一张。
+        hits.sort(key=lambda h: (h[1], h[0]))
+        rows = []
         for h in hits:
-            # 与「上一个命中点」比较而不是与聚类代表比较，避免命中点沿 x 链式漂移
-            # 把相邻两张牌并成一张
-            if clusters and last_x is not None and h[0] - last_x < gap:
-                if h[2] > clusters[-1][2]:
-                    clusters[-1] = h
+            if rows and abs(h[1] - rows[-1][-1][1]) <= max(10, int(h[5] * 0.5)):
+                rows[-1].append(h)
             else:
-                clusters.append(h)
-            last_x = h[0]
+                rows.append([h])
+
+        clusters = []
+        for row in rows:
+            row.sort(key=lambda h: h[0])
+            row_clusters = []
+            last_x = None
+            for h in row:
+                # 与「上一个命中点」比较而不是与聚类代表比较，
+                # 避免命中点沿 x 链式漂移把相邻两张牌并成一张
+                if row_clusters and last_x is not None and h[0] - last_x < gap:
+                    if h[2] > row_clusters[-1][2]:
+                        row_clusters[-1] = h
+                else:
+                    row_clusters.append(h)
+                last_x = h[0]
+            clusters.extend(row_clusters)
 
         detail = []
         for xx, yy, score, card, tw, th in clusters:

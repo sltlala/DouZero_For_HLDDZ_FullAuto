@@ -63,6 +63,16 @@ class MyPyQT_Form(QtWidgets.QWidget, Ui_Form):
         self.AutoButton.setStyleSheet('background-color: none;')
         self.HandButton.setStyleSheet('background-color: rgba(255, 85, 255, 0.5);')
 
+    def auto_start(self):
+        """程序启动后默认进入自动模式（等价于点一下「自动」）。"""
+        try:
+            if self.thread.isRunning():
+                return
+            print("默认自动模式：正在启动自动化线程...", flush=True)
+            self.auto_game(False)
+        except Exception as e:
+            print("自动启动失败: %s" % e)
+
     def auto_game(self, result):
         self.thread.auto_sign = True
         self.write_threshold(None)
@@ -239,7 +249,10 @@ def _tee_output(log_path):
 
 
 def main():
-    """程序入口（pyproject.toml 里注册为 gui-script: douzero-hlddz）。"""
+    """程序入口（pyproject.toml 里注册为 gui-script: douzero-hlddz）。
+
+    默认**启动即自动模式**；加 `--manual` 参数启动则停在手动模式等你点按钮。
+    """
     _tee_output(LOGS_DIR / "console.log")
     print("=" * 64)
     print("  DouZero_For_HLDDZ_FullAuto v%s" % __version__)
@@ -248,6 +261,9 @@ def main():
     print("  日志文件   : %s" % (LOGS_DIR / "console.log"))
     print("=" * 64)
     print("正在加载模板与模型（约 3-5 秒）...", flush=True)
+
+    argv = sys.argv[1:]
+    start_manual = "--manual" in argv or "-m" in argv
 
     app = QtWidgets.QApplication(sys.argv)
     window = MyPyQT_Form()
@@ -261,7 +277,13 @@ def main():
     else:
         print("样式表未找到或被占用: {}".format(STYLE_QSS))
     window.show()
-    print("界面已就绪：进入对局后点「手动」或「自动」开始", flush=True)
+
+    if start_manual:
+        print("界面已就绪：手动模式，点「手动」或「自动」开始", flush=True)
+    else:
+        print("界面已就绪：默认自动模式，0.5 秒后自动开始（停止后可手动切换）", flush=True)
+        # 等界面画完再起线程，避免首帧卡顿
+        QtCore.QTimer.singleShot(500, window.auto_start)
     return app.exec_()
 
 

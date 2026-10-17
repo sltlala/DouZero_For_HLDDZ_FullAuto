@@ -187,7 +187,14 @@ class GameHelper:
                     self.sleep(200)
                     continue
 
-                # 窗口已最小化时 PrintWindow 只能抓到标题栏大小的黑图，直接提示并重试
+                # 窗口已最小化时 PrintWindow 只能抓到标题栏大小的黑图。
+                # 本程序在提权环境下具备恢复窗口的权限，先尝试自己恢复；失败再提示用户。
+                if win32gui.IsIconic(hwnd):
+                    try:
+                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                        self.sleep(300)
+                    except Exception:
+                        pass
                 if win32gui.IsIconic(hwnd):
                     if not self._minimized_warned:
                         print("游戏窗口已最小化，无法识别：请从任务栏恢复窗口（允许被遮挡，但不能最小化）")

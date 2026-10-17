@@ -1040,38 +1040,90 @@ class Worker(QThread):
         print()
         time.sleep(5)
 
-    def find_cards(self, img, pos, mark="", confidence=0.8):
-        cards_real = ""
-        D_king = 0
-        X_king = 0
+    # 各区域牌面模板的缩放范围。底牌比手牌明显小（实测约 0.5 倍），
+    # 其它区域给一点余量以兼容窗口缩放导致的尺寸差异。
+    CARD_SCALES = {
+        "m": (0.90, 1.00, 1.10),
+        "o": (0.80, 0.90, 1.00, 1.10),
+        "c": (0.80, 0.90, 1.00, 1.10),
+        "z": (0.45, 0.50, 0.55, 0.60, 0.65, 0.70),
+    }
+
+    # 底牌区域改用「缩小的手牌模板」匹配：pics/z*.png 是旧版客户端的尺寸，
+    # 新版底牌只有手牌模板的约 0.5 倍，套旧模板最高只有 0.65 分。
+    CARD_TEMPLATE_MARK = {"z": "m"}
+
+    def find_cards_detail(self, img, pos, mark="", confidence=0.8, gap=12):
+        """识别区域内所有牌面，返回 [(牌面字符, x, y, w, h), ...]，按从左到右排序。
+
+        x/y 是**整幅规范画布**坐标（已加上区域偏移），可直接用于点击定位。
+        相比旧实现：多尺度匹配、跨牌型按 x 聚类（一张牌只取最高分牌型）、
+        大小王用被匹配到的那张牌自身的裁剪块判红黑。
+        """
+        if img is None:
+            return []
+        x0, y0, w0, h0 = pos
+        crop = img[y0:y0 + h0, x0:x0 + w0]
+        if crop.size == 0:
+            return []
+
+        scales = self.CARD_SCALES.get(mark, (1.0,))
+        tpl_mark = self.CARD_TEMPLATE_MARK.get(mark, mark)
+        hits = []
         for card in AllCards:
-            result = gh.LocateAllOnImage(img, helper.PicsCV[mark + card], region=pos, confidence=confidence)
+            tpl0 = helper.PicsCV.get(tpl_mark + card)
+            if tpl0 is None:
+                continue
+            for s in scales:
+                tpl = cv2.resize(tpl0, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+                if tpl.shape[0] >= crop.shape[0] or tpl.shape[1] >= crop.shape[1]:
+                    continue
+                res = cv2.matchTemplate(crop, tpl, cv2.TM_CCOEFF_NORMED)
+                ys, xs = np.where(res >= confidence)
+                for yy, xx in zip(ys, xs):
+                    hits.append((int(xx), int(yy), float(res[yy, xx]), card,
+                                 int(tpl.shape[1]), int(tpl.shape[0])))
+        if not hits:
+            return []
 
-            if len(result) > 0:
-                count, s = cards_filter(list(result), self.distance)
-                if card == "X" or card == "D":
-                    for a in s:
-                        classifier = DC.ColorClassify(debug=True)
-                        img1 = img[pos[1]:pos[1] + pos[3], pos[0]:pos[0] + pos[2]]
-                        img2 = img1[a[1]:a[1] + a[3] - 50, a[0]:a[0] + 20]  # 注意连着裁切时img不能重名
-                        result = classifier.classify(img2)
-                        for b in result:
-                            if b[0] == "Red":
-                                if b[1] > 0.7:
-                                    D_king = 1
-                                else:
-                                    X_king = 1
-                else:
-                    cards_real += card[0] * count
+        hits.sort(key=lambda h: h[0])
+        clusters = []
+        last_x = None
+        for h in hits:
+            # 与「上一个命中点」比较而不是与聚类代表比较，避免命中点沿 x 链式漂移
+            # 把相邻两张牌并成一张
+            if clusters and last_x is not None and h[0] - last_x < gap:
+                if h[2] > clusters[-1][2]:
+                    clusters[-1] = h
+            else:
+                clusters.append(h)
+            last_x = h[0]
 
-        if X_king:
-            cards_real += "X"
-            cards_real = cards_real[-1] + cards_real[:-1]
+        detail = []
+        for xx, yy, score, card, tw, th in clusters:
+            ch = self._king_label(crop, xx, yy, tw, th) if card in ("X", "D") else card[0]
+            detail.append((ch, int(xx) + x0, int(yy) + y0, tw, th))
+        return detail
 
-        if D_king:
-            cards_real += "D"
-            cards_real = cards_real[-1] + cards_real[:-1]
-        return cards_real
+    @staticmethod
+    def _king_label(crop, x, y, w, h):
+        """用大小王模板命中处的裁剪块判红黑：红=大王(D)，黑=小王(X)。"""
+        try:
+            patch = crop[max(0, y):y + h, max(0, x):x + w]
+            if patch.size:
+                for name, weight in DC.ColorClassify(debug=False).classify(patch):
+                    if name == "Red":
+                        return "D" if weight > 0.7 else "X"
+        except Exception:
+            pass
+        return "X"
+
+    def find_cards(self, img, pos, mark="", confidence=0.8, gap=12):
+        """识别区域内所有牌面，返回**从左到右**排列的牌面字符串。
+
+        顺序与位置一致（都按 x），click_cards 用 zip(cards, pos_list) 建映射不会错位。
+        """
+        return "".join(d[0] for d in self.find_cards_detail(img, pos, mark, confidence, gap))
 
     def find_my_cards(self):
         img, _ = helper.Screenshot()
@@ -1094,80 +1146,14 @@ class Worker(QThread):
     def find_three_cards(self):
         """识别三张底牌。
 
-        新版客户端把底牌画得比手牌小很多（约为手牌模板的 0.5 倍），而 pics/z*.png
-        是旧尺寸，直接套用只有 0.65 左右的匹配分，永远低于 0.8 阈值 —— 表现为开局
-        一直卡在「正在识别底牌」。这里改为用 m*（手牌）模板做多尺度匹配。
+        底牌比手牌小很多（实测约手牌模板的 0.5 倍），find_cards 的 mark="z"
+        会用缩小的手牌模板多尺度匹配（见 CARD_TEMPLATE_MARK）。
         """
         img, _ = helper.Screenshot()
         if img is None:
             return ""
         img = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
-
-        cards = self.find_cards_multiscale(img, self.LandlordCardsPos,
-                                           scales=(0.45, 0.50, 0.55, 0.60, 0.65, 0.70),
-                                           confidence=0.72)
-        if len(cards) == 3:
-            return cards
-
-        # 退回旧模板（老版本客户端 / 其他分辨率下仍然可用）
-        legacy = self.find_cards(img, self.LandlordCardsPos, mark="z")
-        return legacy if len(legacy) == 3 else cards
-
-    def find_cards_multiscale(self, img, pos, scales, confidence=0.75, gap=12):
-        """在给定区域内按多尺度匹配牌面，返回按 x 排序的牌面字符串。
-
-        与 find_cards 的区别：模板按 scales 缩放后再匹配，并跨牌型按 x 聚类，
-        避免「一张牌被多个牌型重复计数」或「尺寸不符直接漏检」。
-        """
-        x0, y0, w0, h0 = pos
-        crop = img[y0:y0 + h0, x0:x0 + w0]
-        if crop.size == 0:
-            return ""
-
-        hits = []
-        for card in AllCards:
-            tpl0 = helper.PicsCV.get("m" + card)
-            if tpl0 is None:
-                continue
-            for s in scales:
-                tpl = cv2.resize(tpl0, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
-                if tpl.shape[0] >= crop.shape[0] or tpl.shape[1] >= crop.shape[1]:
-                    continue
-                res = cv2.matchTemplate(crop, tpl, cv2.TM_CCOEFF_NORMED)
-                ys, xs = np.where(res >= confidence)
-                for yy, xx in zip(ys, xs):
-                    hits.append((int(xx), int(yy), float(res[yy, xx]), card,
-                                 int(tpl.shape[1]), int(tpl.shape[0])))
-
-        if not hits:
-            return ""
-
-        hits.sort(key=lambda h: h[0])
-        clusters = []
-        for h in hits:
-            if clusters and h[0] - clusters[-1][0] < gap:
-                if h[2] > clusters[-1][2]:
-                    clusters[-1] = h
-            else:
-                clusters.append(h)
-
-        result = ""
-        for xx, yy, score, card, tw, th in clusters:
-            if card in ("X", "D"):
-                # 大小王靠花色区颜色区分：红=大王(D)，黑=小王(X)
-                patch = crop[yy:yy + th, xx:xx + tw]
-                label = "X"
-                try:
-                    for name, weight in DC.ColorClassify(debug=False).classify(patch):
-                        if name == "Red":
-                            label = "D" if weight > 0.7 else "X"
-                            break
-                except Exception:
-                    pass
-                result += label
-            else:
-                result += card[0]
-        return result
+        return self.find_cards(img, self.LandlordCardsPos, mark="z", confidence=0.72)
 
     def save_debug_shot(self, tag):
         """识别异常时保存现场截图到 logs/，便于事后排查（最多保留 30 张）。"""
@@ -1208,7 +1194,17 @@ class Worker(QThread):
             if res2 is not None:
                 pos = res1[0] + 6, res1[1] + 7
 
-            pos_list = [(int(pos[0] + i * space), pos[1]) for i in range(num)]
+            # 优先用实际识别到的每张牌 x 坐标：手牌张数变化时游戏会改变牌间距，
+            # 固定 45.6 只能近似；y 仍用 up_left 推导，保持原有点击高度。
+            img0, _ = helper.Screenshot()
+            detail = []
+            if img0 is not None:
+                img0 = cv2.cvtColor(np.asarray(img0), cv2.COLOR_RGB2BGR)
+                detail = self.find_cards_detail(img0, self.MyHandCardsPos, mark="m")
+            if len(detail) == num:
+                pos_list = [(d[1], pos[1]) for d in detail]
+            else:
+                pos_list = [(int(pos[0] + i * space), pos[1]) for i in range(num)]
 
             # 将两个列表合并转为字典
             cards_dict = defaultdict(list)

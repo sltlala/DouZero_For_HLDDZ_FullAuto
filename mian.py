@@ -6,7 +6,8 @@
 
 import GameHelper as gh
 from GameHelper import GameHelper, play_sound, read_json, write_json
-from app_paths import BASELINES_DIR, MUSIC_DIR, STYLE_QSS
+from app_paths import BASELINES_DIR, MUSIC_DIR, STYLE_QSS, ROOT
+from pathlib import Path
 import sys
 import json
 import time
@@ -623,12 +624,18 @@ class Worker(QThread):
 
         # 识别三张底牌
         print("正在识别底牌", end="")
+        three_tries = 0
         while len(self.three_cards_real) != 3:
             print(".", end="")
             if not self.RunGame:
                 break
             time.sleep(0.2)
             self.three_cards_real = self.find_three_cards()
+            three_tries += 1
+            if three_tries % 10 == 0:
+                print("\n底牌识别异常（识别到 %d 张: %r）"
+                      % (len(self.three_cards_real), self.three_cards_real))
+                self.save_debug_shot("three_cards_%d" % len(self.three_cards_real))
             self.detect_start_btn()
         print("\n底牌： ", self.three_cards_real)
         self.three_cards_display.emit("底牌：" + self.three_cards_real)
@@ -651,12 +658,18 @@ class Worker(QThread):
 
         # 识别玩家手牌
         self.user_hand_cards_real = self.find_my_cards()
+        hand_tries = 0
         if self.user_position_code == 1:
             while len(self.user_hand_cards_real) != 20:
                 if not self.RunGame:
                     break
                 time.sleep(0.2)
                 self.user_hand_cards_real = self.find_my_cards()
+                hand_tries += 1
+                if hand_tries % 10 == 0:
+                    print("\n手牌识别异常（期望 20 张，实际 %d 张: %s）"
+                          % (len(self.user_hand_cards_real), self.user_hand_cards_real))
+                    self.save_debug_shot("my_cards_%d" % len(self.user_hand_cards_real))
                 self.detect_start_btn()
             self.user_hand_cards_env = [RealCard2EnvCard[c] for c in list(self.user_hand_cards_real)]
         else:
@@ -665,6 +678,11 @@ class Worker(QThread):
                     break
                 time.sleep(0.2)
                 self.user_hand_cards_real = self.find_my_cards()
+                hand_tries += 1
+                if hand_tries % 10 == 0:
+                    print("\n手牌识别异常（期望 17 张，实际 %d 张: %s）"
+                          % (len(self.user_hand_cards_real), self.user_hand_cards_real))
+                    self.save_debug_shot("my_cards_%d" % len(self.user_hand_cards_real))
                 self.detect_start_btn()
             self.user_hand_cards_env = [RealCard2EnvCard[c] for c in list(self.user_hand_cards_real)]
 
@@ -1078,6 +1096,26 @@ class Worker(QThread):
         img = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
         landlord__cards_real = self.find_cards(img, self.LandlordCardsPos, mark="z")
         return landlord__cards_real
+
+    def save_debug_shot(self, tag):
+        """识别异常时保存现场截图到 logs/，便于事后排查（最多保留 30 张）。"""
+        try:
+            img, _ = helper.Screenshot()
+            if img is None:
+                return
+            logs_dir = Path(ROOT) / "logs"
+            logs_dir.mkdir(exist_ok=True)
+            filename = "debug_%s_%s.png" % (tag, time.strftime("%Y%m%d_%H%M%S"))
+            path = logs_dir / filename
+            img.save(path)
+            print("已保存诊断截图:", path)
+            for old in sorted(logs_dir.glob("debug_*.png"))[:-30]:
+                try:
+                    old.unlink()
+                except Exception:
+                    pass
+        except Exception as e:
+            print("保存诊断截图失败:", repr(e))
 
     def click_cards(self, out_cards):
         try:

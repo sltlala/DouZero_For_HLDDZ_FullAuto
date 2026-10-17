@@ -1,4 +1,4 @@
-__pycache__/
+﻿__pycache__/
 *.py[cod]
 *$py.class
 .idea/
@@ -14,3 +14,6 @@ dist/
 
 # 训练产物（体积大，不入库）
 douzero_checkpoints/
+
+# 识别失败的现场截图
+logs/

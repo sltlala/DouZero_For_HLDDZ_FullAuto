@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """GUI 外壳：主窗口（MyPyQT_Form）与程序入口 main()。"""
+import os
 import sys
 
 from PyQt5 import QtCore, QtGui, QtWidgets
@@ -7,7 +8,8 @@ from PyQt5.QtCore import QFile, QTextStream, Qt
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QTableWidgetItem
 
-from .paths import MUSIC_DIR, STYLE_QSS
+from . import __version__
+from .paths import LOGS_DIR, MUSIC_DIR, ROOT, STYLE_QSS
 from .perception.screen import play_sound, read_json, write_json
 from .ui.main_window import Ui_Form
 from .worker import AllCards, Worker
@@ -197,8 +199,56 @@ class MyPyQT_Form(QtWidgets.QWidget, Ui_Form):
             self.tableWidget.setItem(0, i, newItem)
 
 
+def _tee_output(log_path):
+    """把 stdout/stderr 同时写到控制台和日志文件。
+
+    用 run.bat 提权启动时，原控制台会立即关闭、输出转到新开的窗口；一旦那个窗口
+    一闪而过（崩溃/被关掉）就什么也看不到。这里始终保留一份日志，便于事后排查。
+    """
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(log_path, "a", encoding="utf-8", buffering=1)
+    except Exception:
+        return None
+
+    class _Tee:
+        def __init__(self, *streams):
+            self._streams = streams
+
+        def write(self, s):
+            for st in self._streams:
+                try:
+                    st.write(s)
+                    st.flush()
+                except Exception:
+                    pass
+
+        def flush(self):
+            for st in self._streams:
+                try:
+                    st.flush()
+                except Exception:
+                    pass
+
+        def isatty(self):
+            return False
+
+    sys.stdout = _Tee(sys.stdout, fh)
+    sys.stderr = _Tee(sys.stderr, fh)
+    return fh
+
+
 def main():
     """程序入口（pyproject.toml 里注册为 gui-script: douzero-hlddz）。"""
+    _tee_output(LOGS_DIR / "console.log")
+    print("=" * 64)
+    print("  DouZero_For_HLDDZ_FullAuto v%s" % __version__)
+    print("  项目根目录 : %s" % ROOT)
+    print("  当前目录   : %s" % os.getcwd())
+    print("  日志文件   : %s" % (LOGS_DIR / "console.log"))
+    print("=" * 64)
+    print("正在加载模板与模型（约 3-5 秒）...", flush=True)
+
     app = QtWidgets.QApplication(sys.argv)
     window = MyPyQT_Form()
     # 旧代码没有 open() 就直接 readAll()，Qt 会报 "device not open"，样式表永远是空的
@@ -211,6 +261,7 @@ def main():
     else:
         print("样式表未找到或被占用: {}".format(STYLE_QSS))
     window.show()
+    print("界面已就绪：进入对局后点「手动」或「自动」开始", flush=True)
     return app.exec_()
 
 

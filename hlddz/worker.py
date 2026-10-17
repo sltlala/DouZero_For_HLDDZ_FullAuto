@@ -416,6 +416,8 @@ class Worker(QThread):
                         helper.ClickOnImage("ming_btn", region=self.GeneralBtnPos)
                         print("明牌")
 
+                bid_wait_start = time.time()
+                last_phase_check = bid_wait_start
                 while self.RunGame and self.auto_sign:
                     outterBreak = False
                     jiaodizhu_btn = helper.LocateOnScreen("jiaodizhu_btn", region=self.GeneralBtnPos)
@@ -431,6 +433,16 @@ class Worker(QThread):
                         qiangdizhu_btn = helper.LocateOnScreen("qiangdizhu_btn", region=self.GeneralBtnPos)
                         jiabei_btn = helper.LocateOnScreen("jiabei_btn", region=self.GeneralBtnPos)
                         self.detect_start_btn()
+                        # 中途接管时叫牌/加倍阶段可能已经过去：按钮永远不会出现，
+                        # 若此时底牌已经亮出（3 张），直接进入出牌阶段，避免死等。
+                        if time.time() - bid_wait_start > 20 and time.time() - last_phase_check > 2:
+                            last_phase_check = time.time()
+                            if len(self.find_three_cards()) == 3:
+                                print("\n叫牌/加倍阶段已过（底牌已亮出、无按钮），直接进入出牌")
+                                outterBreak = True
+                                break
+                    if outterBreak:
+                        break
                     if jiabei_btn is None:
                         cards = self.find_my_cards()
                         while len(cards) != 17 and len(cards) != 20:
@@ -679,13 +691,26 @@ class Worker(QThread):
         # 识别玩家的角色
         time.sleep(0.5)
         print("正在识别玩家角色", end="")
+        role_tries = 0
         while self.user_position_code is None:
             if not self.RunGame:
                 break
             print(".", end="")
             self.user_position_code = self.find_landlord()
+            role_tries += 1
+            if role_tries % 10 == 0 and self.user_position_code is None:
+                hand = self.find_my_cards()
+                print("\n玩家角色识别中：未找到地主标志，手牌 %d 张（%r）"
+                      % (len(hand), hand))
+                self.save_debug_shot("role_%d" % len(hand))
             time.sleep(0.2)
             self.detect_start_btn()
+
+        if self.user_position_code is None:
+            # 停止/跳出循环时可能仍为 None，直接索引会 TypeError
+            print("\n未能识别玩家角色，跳过本局")
+            self.RunGame = False
+            return
 
         self.user_position = ['landlord_up', 'landlord', 'landlord_down'][self.user_position_code]
         print("我的角色：", self.user_position)
@@ -694,32 +719,29 @@ class Worker(QThread):
         # 识别玩家手牌
         self.user_hand_cards_real = self.find_my_cards()
         hand_tries = 0
-        if self.user_position_code == 1:
-            while len(self.user_hand_cards_real) != 20:
-                if not self.RunGame:
-                    break
-                time.sleep(0.2)
-                self.user_hand_cards_real = self.find_my_cards()
-                hand_tries += 1
-                if hand_tries % 10 == 0:
-                    print("\n手牌识别异常（期望 20 张，实际 %d 张: %s）"
-                          % (len(self.user_hand_cards_real), self.user_hand_cards_real))
-                    self.save_debug_shot("my_cards_%d" % len(self.user_hand_cards_real))
-                self.detect_start_btn()
-            self.user_hand_cards_env = [RealCard2EnvCard[c] for c in list(self.user_hand_cards_real)]
-        else:
-            while len(self.user_hand_cards_real) != 17:
-                if not self.RunGame:
-                    break
-                time.sleep(0.2)
-                self.user_hand_cards_real = self.find_my_cards()
-                hand_tries += 1
-                if hand_tries % 10 == 0:
-                    print("\n手牌识别异常（期望 17 张，实际 %d 张: %s）"
-                          % (len(self.user_hand_cards_real), self.user_hand_cards_real))
-                    self.save_debug_shot("my_cards_%d" % len(self.user_hand_cards_real))
-                self.detect_start_btn()
-            self.user_hand_cards_env = [RealCard2EnvCard[c] for c in list(self.user_hand_cards_real)]
+        expect_hand = 20 if self.user_position_code == 1 else 17
+        while len(self.user_hand_cards_real) != expect_hand:
+            if not self.RunGame:
+                break
+            time.sleep(0.2)
+            self.user_hand_cards_real = self.find_my_cards()
+            hand_tries += 1
+            if hand_tries % 10 == 0:
+                got = len(self.user_hand_cards_real)
+                print("\n手牌识别异常（期望 %d 张，实际 %d 张: %s）"
+                      % (expect_hand, got, self.user_hand_cards_real))
+                self.save_debug_shot("my_cards_%d" % got)
+                if got < expect_hand - 2:
+                    # 中途接管：本局已经打了一会儿，手牌不足开局数量，等下一局
+                    print("\n当前对局已进行中（手牌 %d 张），无法中途接管；等待本局结束" % got)
+                    self.state_display.emit("等待下一局")
+                    while self.RunGame and self.find_my_cards():
+                        time.sleep(2)
+                        self.detect_start_btn()
+                    self.RunGame = False
+                    return
+            self.detect_start_btn()
+        self.user_hand_cards_env = [RealCard2EnvCard[c] for c in list(self.user_hand_cards_real)]
 
         # 整副牌减去玩家手上的牌，就是其他人的手牌,再分配给另外两个角色（如何分配对AI判断没有影响）
         for i in set(AllEnvCard):
@@ -1324,17 +1346,32 @@ class Worker(QThread):
         time.sleep(0.2)
 
     def find_landlord(self):
+        """判断自己在牌桌上的身份：0=landlord_up，1=landlord，2=landlord_down。
+
+        优先用「地主」标志（LandlordFlagPos 依次是 右 / 我 / 左 三个座位），
+        比按手牌张数推断可靠得多——开局时还没人出牌，旧逻辑会一直返回 None
+        卡在「正在识别玩家角色」。
+        """
+        for code, region in enumerate(self.LandlordFlagPos):
+            try:
+                if helper.LocateOnScreen("landlord", region=region, confidence=0.8) is not None:
+                    return code
+            except Exception:
+                pass
+
+        # 退化：按手牌数量 + 出牌区推断
         my_cards = self.find_my_cards()
+        if len(my_cards) == 20:
+            return 1
         if len(my_cards) == 17:
-            left_cards = self.find_other_cards(self.LPlayedCardsPos)
             right_cards = self.find_other_cards(self.RPlayedCardsPos)
-            #曾经出现过右边出完牌，左边马上出牌，函数运行时，左右两边都有牌，这种情况右边是地主,所以要先右后左
+            left_cards = self.find_other_cards(self.LPlayedCardsPos)
+            # 右边先出牌说明右边是地主，自己在右边下家；否则看左边
             if len(right_cards) > 0:
                 return 0
-            elif len(left_cards) > 0:
+            if len(left_cards) > 0:
                 return 2
-        elif len(my_cards) == 20:
-            return 1
+        return None
 
     def animation(self, cards):
         move_type = get_move_type(real_to_env(cards))

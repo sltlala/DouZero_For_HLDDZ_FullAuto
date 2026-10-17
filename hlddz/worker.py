@@ -1137,7 +1137,7 @@ class Worker(QThread):
         detail = []
         for xx, yy, score, card, tw, th in clusters:
             ch = self._king_label(crop, xx, yy, tw, th) if card in ("X", "D") else card[0]
-            detail.append((ch, int(xx) + x0, int(yy) + y0, tw, th))
+            detail.append((ch, int(xx) + x0, int(yy) + y0, tw, th, float(score)))
         return detail
 
     @staticmethod
@@ -1181,14 +1181,26 @@ class Worker(QThread):
     def find_three_cards(self):
         """识别三张底牌。
 
-        底牌比手牌小很多（实测约手牌模板的 0.5 倍），find_cards 的 mark="z"
-        会用缩小的手牌模板多尺度匹配（见 CARD_TEMPLATE_MARK）。
+        底牌比手牌小很多（约 0.5 倍），用缩小的手牌模板多尺度匹配
+        （见 CARD_TEMPLATE_MARK）。另外逐级降低阈值重试：大小王牌面窄，
+        缩小后匹配分天然偏低（实测约 0.63），固定 0.72 会漏成 2 张；
+        若某轮命中超过 3 张，按分数取最高的 3 张再把顺序还原成从左到右。
         """
         img, _ = helper.Screenshot()
         if img is None:
             return ""
         img = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
-        return self.find_cards(img, self.LandlordCardsPos, mark="z", confidence=0.72)
+
+        detail = []
+        for conf in (0.72, 0.64, 0.58):
+            detail = self.find_cards_detail(img, self.LandlordCardsPos, mark="z", confidence=conf)
+            if len(detail) == 3:
+                break
+            if len(detail) > 3:
+                detail = sorted(detail, key=lambda d: d[5], reverse=True)[:3]
+                detail.sort(key=lambda d: d[1])
+                break
+        return "".join(d[0] for d in detail)
 
     def save_debug_shot(self, tag):
         """识别异常时保存现场截图到 logs/，便于事后排查（最多保留 30 张）。"""

@@ -18,9 +18,25 @@ import numpy as np
 import win32gui
 import win32process
 
+LOG_PATH = os.path.join(os.environ.get("TEMP", "."), "env_probe_log.txt")
+_log_lines = []
+
+
+def _print(*args):
+    text = " ".join(str(a) for a in args)
+    print(text)
+    _log_lines.append(text)
+    try:
+        with open(LOG_PATH, "w", encoding="utf-8") as f:
+            f.write("\n".join(_log_lines))
+    except Exception:
+        pass
+
 
 def main():
+    print = _print
     print("=" * 60)
+    print("日志:", LOG_PATH)
     # 1) 权限
     import ctypes
     admin = bool(ctypes.windll.shell32.IsUserAnAdmin())

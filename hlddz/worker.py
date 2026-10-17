@@ -531,18 +531,28 @@ class Worker(QThread):
 
                         self.three_cards_real = self.find_three_cards()
                         print("正在识别底牌", end="")
+                        three_deadline = time.time() + 15
                         while len(self.three_cards_real) != 3:
                             print(".", end="")
                             if not self.RunGame or not self.auto_sign:
                                 break
+                            if time.time() > three_deadline:
+                                print("\n底牌识别超时，退出本局")
+                                self.RunGame = False
+                                return
                             time.sleep(0.2)
                             self.three_cards_real = self.find_three_cards()
                             self.detect_start_btn()
                         print("\n底牌:", self.three_cards_real)
                         cards = self.find_my_cards()
+                        hand_deadline = time.time() + 15
                         while len(cards) != 17 and len(cards) != 20:
                             if not self.RunGame or not self.auto_sign:
                                 break
+                            if time.time() > hand_deadline:
+                                print("\n手牌识别超时，退出本局")
+                                self.RunGame = False
+                                return
                             time.sleep(0.2)
                             cards = self.find_my_cards()
                             self.detect_start_btn()
@@ -659,18 +669,28 @@ class Worker(QThread):
                         self.state_display.emit("正在加倍")
                         self.three_cards_real = self.find_three_cards()
                         print("正在识别底牌", end="")
+                        three_deadline = time.time() + 15
                         while len(self.three_cards_real) != 3:
                             print(".", end="")
                             if not self.RunGame or not self.auto_sign:
                                 break
+                            if time.time() > three_deadline:
+                                print("\n底牌识别超时，退出本局")
+                                self.RunGame = False
+                                return
                             time.sleep(0.2)
                             self.three_cards_real = self.find_three_cards()
                             self.detect_start_btn()
                         print("\n底牌:", self.three_cards_real)
                         cards = self.find_my_cards()
+                        hand_deadline = time.time() + 15
                         while len(cards) != 17 and len(cards) != 20:
                             if not self.RunGame or not self.auto_sign:
                                 break
+                            if time.time() > hand_deadline:
+                                print("\n手牌识别超时，退出本局")
+                                self.RunGame = False
+                                return
                             time.sleep(0.2)
                             cards = self.find_my_cards()
                             self.detect_start_btn()
@@ -717,10 +737,15 @@ class Worker(QThread):
         # 识别三张底牌
         print("正在识别底牌", end="")
         three_tries = 0
+        three_deadline = time.time() + 20
         while len(self.three_cards_real) != 3:
             print(".", end="")
             if not self.RunGame:
                 break
+            if time.time() > three_deadline:
+                print("\n底牌识别超时（20 秒），退出本局")
+                self.RunGame = False
+                return
             time.sleep(0.2)
             self.three_cards_real = self.find_three_cards()
             three_tries += 1
@@ -748,6 +773,16 @@ class Worker(QThread):
                 print("\n玩家角色识别中：未找到地主标志，手牌 %d 张（%r）"
                       % (len(hand), hand))
                 self.save_debug_shot("role_%d" % len(hand))
+                # 手牌已经空了 ⇒ 本局早就结束（地主标志也随界面消失），别再空转
+                if len(hand) == 0:
+                    print("手牌为空（本局已结束），退出本局等待下一局")
+                    self.RunGame = False
+                    return
+            # 硬超时：30 秒还认不出角色就放弃本局，避免界面卡死
+            if role_tries > 150:
+                print("\n识别角色超时，退出本局")
+                self.RunGame = False
+                return
             time.sleep(0.2)
             self.detect_start_btn()
 

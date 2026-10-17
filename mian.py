@@ -1092,10 +1092,82 @@ class Worker(QThread):
         return other_cards_real
 
     def find_three_cards(self):
+        """识别三张底牌。
+
+        新版客户端把底牌画得比手牌小很多（约为手牌模板的 0.5 倍），而 pics/z*.png
+        是旧尺寸，直接套用只有 0.65 左右的匹配分，永远低于 0.8 阈值 —— 表现为开局
+        一直卡在「正在识别底牌」。这里改为用 m*（手牌）模板做多尺度匹配。
+        """
         img, _ = helper.Screenshot()
+        if img is None:
+            return ""
         img = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
-        landlord__cards_real = self.find_cards(img, self.LandlordCardsPos, mark="z")
-        return landlord__cards_real
+
+        cards = self.find_cards_multiscale(img, self.LandlordCardsPos,
+                                           scales=(0.45, 0.50, 0.55, 0.60, 0.65, 0.70),
+                                           confidence=0.72)
+        if len(cards) == 3:
+            return cards
+
+        # 退回旧模板（老版本客户端 / 其他分辨率下仍然可用）
+        legacy = self.find_cards(img, self.LandlordCardsPos, mark="z")
+        return legacy if len(legacy) == 3 else cards
+
+    def find_cards_multiscale(self, img, pos, scales, confidence=0.75, gap=12):
+        """在给定区域内按多尺度匹配牌面，返回按 x 排序的牌面字符串。
+
+        与 find_cards 的区别：模板按 scales 缩放后再匹配，并跨牌型按 x 聚类，
+        避免「一张牌被多个牌型重复计数」或「尺寸不符直接漏检」。
+        """
+        x0, y0, w0, h0 = pos
+        crop = img[y0:y0 + h0, x0:x0 + w0]
+        if crop.size == 0:
+            return ""
+
+        hits = []
+        for card in AllCards:
+            tpl0 = helper.PicsCV.get("m" + card)
+            if tpl0 is None:
+                continue
+            for s in scales:
+                tpl = cv2.resize(tpl0, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+                if tpl.shape[0] >= crop.shape[0] or tpl.shape[1] >= crop.shape[1]:
+                    continue
+                res = cv2.matchTemplate(crop, tpl, cv2.TM_CCOEFF_NORMED)
+                ys, xs = np.where(res >= confidence)
+                for yy, xx in zip(ys, xs):
+                    hits.append((int(xx), int(yy), float(res[yy, xx]), card,
+                                 int(tpl.shape[1]), int(tpl.shape[0])))
+
+        if not hits:
+            return ""
+
+        hits.sort(key=lambda h: h[0])
+        clusters = []
+        for h in hits:
+            if clusters and h[0] - clusters[-1][0] < gap:
+                if h[2] > clusters[-1][2]:
+                    clusters[-1] = h
+            else:
+                clusters.append(h)
+
+        result = ""
+        for xx, yy, score, card, tw, th in clusters:
+            if card in ("X", "D"):
+                # 大小王靠花色区颜色区分：红=大王(D)，黑=小王(X)
+                patch = crop[yy:yy + th, xx:xx + tw]
+                label = "X"
+                try:
+                    for name, weight in DC.ColorClassify(debug=False).classify(patch):
+                        if name == "Red":
+                            label = "D" if weight > 0.7 else "X"
+                            break
+                except Exception:
+                    pass
+                result += label
+            else:
+                result += card[0]
+        return result
 
     def save_debug_shot(self, tag):
         """识别异常时保存现场截图到 logs/，便于事后排查（最多保留 30 张）。"""

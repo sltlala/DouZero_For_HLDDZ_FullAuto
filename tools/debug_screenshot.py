@@ -2,8 +2,8 @@
 
 用法：先让欢乐斗地主以窗口模式运行，再执行 `python debug_screenshot.py`。
 """
-import GameHelper as gh
-from GameHelper import GameHelper
+from hlddz.perception import screen as gh
+from hlddz.perception.screen import GameHelper
 import cv2
 import numpy as np
 

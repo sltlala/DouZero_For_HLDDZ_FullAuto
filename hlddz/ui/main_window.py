@@ -802,4 +802,4 @@ class Ui_Form(object):
         self.bid_label_2.setText(_translate("Form", "一 抢:"))
         self.ResetButton.setText(_translate("Form", "重置"))
         self.mingpai_label.setText(_translate("Form", "明牌:"))
-import picture_rc
+from . import resources_rc  # noqa: F401  由 picture.qrc 编译而来

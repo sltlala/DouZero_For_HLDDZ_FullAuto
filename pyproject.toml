@@ -55,26 +55,15 @@ dev = ["pytest>=7.4"]
 douzero-train = "douzero.dmc.dmc:main"
 
 [project.gui-scripts]
-# 等价于 `python mian.py`（资源路径已由 app_paths.py 解析为绝对路径）
-douzero-hlddz = "mian:main"
+# 等价于 `python -m hlddz`
+douzero-hlddz = "hlddz.app:main"
 
 [tool.setuptools]
-# 平铺布局：根目录下的脚本按模块打包，douzero 是唯一的包
-py-modules = [
-    "mian",
-    "app_paths",
-    "GameHelper",
-    "DetermineColor",
-    "BidModel",
-    "FarmerModel",
-    "LandlordModel",
-    "search_utility",
-    "MainWindow",
-    "picture_rc",
-]
+# 根目录只保留一个兼容入口；实际代码在 hlddz 包里
+py-modules = ["mian"]
 
 [tool.setuptools.packages.find]
-include = ["douzero", "douzero.*"]
+include = ["hlddz", "hlddz.*", "douzero", "douzero.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

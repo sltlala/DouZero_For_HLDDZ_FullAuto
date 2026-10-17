@@ -14,7 +14,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from app_paths import WEIGHTS_DIR
+from ..paths import WEIGHTS_DIR
 
 # 权重文件（绝对路径，不依赖当前工作目录）
 WEIGHTS_PATH = str(WEIGHTS_DIR / "bid_weights.pkl")

@@ -20,18 +20,18 @@ sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from app_paths import PICS_DIR  # noqa: E402
+from hlddz.paths import PICS_DIR  # noqa: E402
 
 
 def _worker_without_init():
     """构造一个不做 __init__ 的 Worker：识别相关方法只用到类属性，避免加载模型。"""
-    import mian
+    from hlddz import worker as mian
     return mian.Worker.__new__(mian.Worker)
 
 
 def _make_frame(cards, spacing=46, x0=345, y0=594):
     """在 1440x810 画布上按从左到右的顺序贴出指定牌面。"""
-    import mian  # noqa: F401  确保模块级 helper/模板已加载
+    from hlddz import worker as mian  # noqa: F401  确保模块级 helper/模板已加载
     canvas = np.full((810, 1440, 3), (30, 110, 60), np.uint8)
     for i, c in enumerate(cards):
         tpl = cv2.imread(str(PICS_DIR / ("m%s.png" % c)))
@@ -43,7 +43,7 @@ def _make_frame(cards, spacing=46, x0=345, y0=594):
 
 def _resize_roundtrip(frame_bgr, size):
     """模拟窗口被缩放：缩放到 size，再经过 normalize_frame 回到规范画布。"""
-    import GameHelper
+    from hlddz.perception import screen as GameHelper
 
     small = cv2.resize(frame_bgr, size, interpolation=cv2.INTER_AREA)
     rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
@@ -52,7 +52,7 @@ def _resize_roundtrip(frame_bgr, size):
 
 
 def test_normalize_frame_always_returns_canvas():
-    import GameHelper
+    from hlddz.perception import screen as GameHelper
 
     for size in [(960, 540), (1152, 648), (1280, 720), (1920, 1080), (1440, 810)]:
         im = Image.new("RGB", size, (10, 10, 10))
@@ -61,7 +61,7 @@ def test_normalize_frame_always_returns_canvas():
 
 
 def test_to_client_mapping():
-    import GameHelper
+    from hlddz.perception import screen as GameHelper
 
     gh = GameHelper.GameHelper.__new__(GameHelper.GameHelper)
     gh.ClientSize = (1440, 810)

@@ -23,6 +23,6 @@ if errorlevel 1 (
 )
 
 echo Starting DouZero_For_HLDDZ_FullAuto as Administrator...
-"%PYTHON%" mian.py
+"%PYTHON%" -m hlddz
 if errorlevel 1 pause
 endlocal

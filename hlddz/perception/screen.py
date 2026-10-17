@@ -19,7 +19,7 @@ import numpy as np
 import os
 import time
 
-from app_paths import DATA_JSON, PICS_DIR, resource
+from ..paths import DATA_JSON, PICS_DIR, resource
 
 
 def enable_dpi_awareness():

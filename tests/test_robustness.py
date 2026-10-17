@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 
 
 def test_resource_paths_are_absolute_and_exist():
-    import app_paths
+    from hlddz import paths as app_paths
 
     for p in (app_paths.DATA_JSON, app_paths.PICS_DIR, app_paths.MUSIC_DIR,
               app_paths.WEIGHTS_DIR, app_paths.BASELINES_DIR, app_paths.STYLE_QSS):
@@ -29,8 +29,9 @@ def test_works_from_any_working_directory():
     """旧代码用 './pics'、'./weights'、'data.json' 等相对路径，换工作目录就崩/静默失败。"""
     code = (
         "import sys; sys.path.insert(0, r'%s')\n"
-        "import app_paths, BidModel, FarmerModel, LandlordModel\n"
-        "h = __import__('GameHelper').GameHelper()\n"
+        "from hlddz import paths as app_paths\n"
+        "from hlddz.models import bid as BidModel, farmer as FarmerModel, landlord as LandlordModel\n"
+        "from hlddz.perception.screen import GameHelper; h = GameHelper()\n"
         "assert len(h.Pics) > 50, len(h.Pics)\n"
         "assert __import__('os').path.isfile(BidModel.WEIGHTS_PATH)\n"
         "assert BidModel._loaded is True\n"
@@ -45,7 +46,7 @@ def test_works_from_any_working_directory():
 
 def test_threshold_json_roundtrip():
     """阈值读写必须走同一份 data.json，并且键集合与界面消费的键一致。"""
-    import GameHelper
+    from hlddz.perception import screen as GameHelper
 
     original = GameHelper.read_json()
     try:
@@ -57,7 +58,7 @@ def test_threshold_json_roundtrip():
         GameHelper.write_json(original)
     assert GameHelper.read_json() == original
 
-    from app_paths import DATA_JSON
+    from hlddz.paths import DATA_JSON
     keys = set(json.loads(DATA_JSON.read_text(encoding="utf-8")))
     assert keys == {"bid1", "bid2", "bid3", "jiabei1", "jiabei2", "jiabei3",
                     "jiabei4", "jiabei7", "jiabei8", "mingpai"}
@@ -65,7 +66,7 @@ def test_threshold_json_roundtrip():
 
 def test_card_constants_have_single_source():
     """mian.py 里不再复制牌面映射/炸弹表，必须与引擎共用同一份对象。"""
-    import mian
+    from hlddz import worker as mian
     import douzero.env.game as game
 
     assert mian.EnvCard2RealCard is game.EnvCard2RealCard
@@ -76,7 +77,7 @@ def test_card_constants_have_single_source():
 
 def test_stop_is_cooperative_first():
     """停止时先请求协作退出，只有超时才 terminate()，不再无条件强杀。"""
-    src = (ROOT / "mian.py").read_text(encoding="utf-8")
+    src = (ROOT / "hlddz" / "app.py").read_text(encoding="utf-8")
     stop_block = src.split("def stop(self, result):", 1)[1].split("\n    def ", 1)[0]
     assert "self.thread.stop_sign = True" in stop_block
     assert "self.thread.wait(" in stop_block
@@ -86,7 +87,7 @@ def test_stop_is_cooperative_first():
 
 def test_threshold_handshake_race_removed():
     """启动流程不再依赖 emit + sleep(0.1) 的跨线程握手。"""
-    src = (ROOT / "mian.py").read_text(encoding="utf-8")
+    src = (ROOT / "hlddz" / "app.py").read_text(encoding="utf-8")
     assert "write_threshold.emit" not in src
     # worker 启动前由主线程落盘
     run_block = src.split("def hand_game(self, result):", 1)[1].split("\n    def ", 1)[0]

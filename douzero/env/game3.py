@@ -5,7 +5,7 @@ from copy import deepcopy
 from . import move_detector as md, move_selector as ms
 from .move_generator import MovesGener
 import random
-from search_utility import search_actions, select_optimal_path, check_42
+from hlddz.engine.search import search_actions, select_optimal_path, check_42
 import numpy as np
 
 EnvCard2RealCard = {3: '3', 4: '4', 5: '5', 6: '6', 7: '7',

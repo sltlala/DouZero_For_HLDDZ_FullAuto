@@ -97,7 +97,7 @@ def test_adp_reward_uses_bomb_count():
 def test_bidmodel_weights_actually_loaded():
     """bid_weights.pkl 的键名必须与 BidModel 里承载权重的网络完全一致，且确实加载成功。"""
     import torch
-    import BidModel
+    from hlddz.models import bid as BidModel
 
     state = torch.load(BidModel.WEIGHTS_PATH, map_location="cpu")
     own = BidModel.net2.state_dict()
@@ -142,7 +142,7 @@ def test_file_writer_constructs_without_nameerror():
 def test_search_actions_returns_path_list():
     """旧版永远 return None（靠副作用传结果），递归里的判空分支还是死代码。"""
     from douzero.env.game import GameEnv  # noqa: F401  先按 mian.py 的顺序导入一次
-    import search_utility as su
+    from hlddz.engine import search as su
 
     paths = []
     ret = su.search_actions([20, 30, 10, 10],
@@ -167,14 +167,14 @@ def test_search_actions_returns_path_list():
 def test_search_utility_can_be_imported_standalone():
     """旧版 game.py 顶层 import search_utility，而 search_utility 又反向 import douzero.env，
     形成循环导入：`python search_utility.py` / `import search_utility` 直接 ImportError。"""
-    out = subprocess.run([sys.executable, "-c", "import search_utility; print('ok')"],
+    out = subprocess.run([sys.executable, "-c", "import hlddz.engine.search; print('ok')"],
                          cwd=str(ROOT), capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert "ok" in out.stdout
 
     # 反方向（先 import douzero.env.*）也必须成立
     out = subprocess.run([sys.executable, "-c",
-                          "from douzero.env.game import GameEnv; import search_utility; print('ok')"],
+                          "from douzero.env.game import GameEnv; import hlddz.engine.search; print('ok')"],
                          cwd=str(ROOT), capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
 
@@ -340,7 +340,7 @@ def test_dead_farmer_threshold_removed():
     assert set(data) == {"bid1", "bid2", "bid3", "jiabei1", "jiabei2", "jiabei3",
                          "jiabei4", "jiabei7", "jiabei8", "mingpai"}
 
-    mian_src = (ROOT / "mian.py").read_text(encoding="utf-8")
+    mian_src = (ROOT / "hlddz" / "worker.py").read_text(encoding="utf-8")
     # 注释里允许提到历史，但不能再有真正的读取/写入代码
     assert "data['jiabei5']" not in mian_src
     assert "data['jiabei6']" not in mian_src
@@ -348,7 +348,7 @@ def test_dead_farmer_threshold_removed():
     assert "jiabei_lineEdit_6" not in mian_src
     assert "FarmerJiabeiThresholdLow" not in mian_src
 
-    ui_src = (ROOT / "MainWindow.py").read_text(encoding="utf-8")
+    ui_src = (ROOT / "hlddz" / "ui" / "main_window.py").read_text(encoding="utf-8")
     assert "jiabei_lineEdit_5" not in ui_src and "jiabei_lineEdit_6" not in ui_src
     assert "农民正常加倍" not in ui_src and "地主怂了" not in ui_src
 

@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Dataset
 import time
 
-from app_paths import WEIGHTS_DIR
+from ..paths import WEIGHTS_DIR
 
 
 def EnvToOnehot(cards):

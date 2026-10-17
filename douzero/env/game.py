@@ -160,7 +160,7 @@ class GameEnv(object):
     def step(self, position, action=None, update=True):  # 是否更新 info set
         # 延迟导入：search_utility 反向依赖 douzero.env，若在此模块顶层导入会形成循环导入，
         # 导致「先 import search_utility」或 `python search_utility.py` 直接 ImportError。
-        from search_utility import search_actions, select_optimal_path, check_42
+        from hlddz.engine.search import search_actions, select_optimal_path, check_42
 
         if action is None:
             action = []

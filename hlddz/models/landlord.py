@@ -9,7 +9,7 @@ from douzero.dmc.models import model_dict_resnet
 import time
 from douzero.env.game import GameEnv
 from douzero.evaluation.deep_agent import DeepAgent
-from app_paths import WEIGHTS_DIR
+from ..paths import WEIGHTS_DIR
 
 
 def EnvToOnehot(cards):

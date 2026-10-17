@@ -57,7 +57,7 @@ def main():
     # 3) 截图
     from PyQt5 import QtWidgets
     QtWidgets.QApplication([])
-    import mian
+    from hlddz import worker as mian
     helper = mian.helper
     img, origin = helper.Screenshot()
     if img is None:

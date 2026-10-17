@@ -56,13 +56,16 @@ pip install -e ".[dev]"
 run.bat
 
 # 或手动以管理员身份打开 PowerShell 后：
-python mian.py
+python -m hlddz
 
 # 安装后生成的命令（同样需要管理员终端）
 douzero-hlddz
+
+# 兼容旧入口（等价于 python -m hlddz）
+python mian.py
 ```
 
-资源路径（`data.json`、`pics/`、`music/`、`weights/`、`baselines/`）由 [app_paths.py](app_paths.py) 统一解析为绝对路径，因此不强制从项目根目录启动。
+资源路径（`data.json`、`pics/`、`music/`、`weights/`、`baselines/`）由 [hlddz/paths.py](hlddz/paths.py) 统一解析为绝对路径，因此不强制从项目根目录启动。
 
 ## 使用流程
 
@@ -97,7 +100,7 @@ douzero-hlddz
 | `baselines/resnet/*.ckpt` | DouZero 出牌模型（地主 / 上家 / 下家） | ADP 目标训练的 resnet 版本；`baselines/resnet/old/` 是备份 |
 | `weights/*.pkl` | 叫牌、加倍用的胜率回归网络 | `bid_weights.pkl`、`farmer_weights.pkl`、`landlord_weights.pkl`、`landlord_{up,down}_weights.pkl` |
 
-更换出牌模型：修改 [mian.py](mian.py) 中 `Worker.model_path_dict`：
+更换出牌模型：修改 [hlddz/worker.py](hlddz/worker.py) 中 `Worker.model_path_dict`：
 
 ```python
 self.model_path_dict = {
@@ -117,22 +120,56 @@ self.model_path_dict = {
 
 ```
 DouZero_For_HLDDZ_FullAuto/
-├── mian.py            # 主程序：GUI 窗口 + Worker 自动化状态机
-├── MainWindow.ui/.py  # Qt 界面（.py 由 pyuic5 从 .ui 生成）
-├── GameHelper.py      # 窗口截图、模板匹配、后台点击
-├── DetermineColor.py  # HSV 判色（区分大王/小王）
-├── app_paths.py       # 资源路径统一解析
-├── search_utility.py  # 残局「一手跑完」路径搜索
-├── BidModel.py        # 叫牌胜率网络
-├── FarmerModel.py     # 农民胜率网络
-├── LandlordModel.py   # 地主胜率网络
-├── douzero/           # 内嵌并适配过的 DouZero 库（env / dmc / evaluation）
-├── baselines/resnet/  # DouZero 出牌模型
-├── weights/           # 叫牌/加倍胜率模型
-├── pics/              # 95 张模板图（牌面 + 按钮/弹窗）
-├── music/             # 提示音
-├── tests/             # 回归测试
-└── data.json          # 决策阈值
+├── mian.py                  # 兼容入口（等价于 python -m hlddz）
+├── pyproject.toml           # 依赖与打包配置
+├── run.bat                  # 一键提权启动
+├── data.json                # 决策阈值（界面可改）
+├── hlddz/                   # ★ 应用代码
+│   ├── __main__.py          # python -m hlddz 入口
+│   ├── app.py               # GUI 外壳：MyPyQT_Form + main()
+│   ├── worker.py            # 自动化编排：Worker 线程（状态机/识别/出牌）
+│   ├── paths.py             # 资源路径统一解析（绝对路径）
+│   ├── runtime.py           # 全局单例 helper（截图/模板）
+│   ├── perception/
+│   │   ├── screen.py        # 窗口截图、PrintWindow/BitBlt、点击、坐标映射
+│   │   └── color.py         # HSV 判色（区分大王/小王）
+│   ├── models/
+│   │   ├── bid.py           # 叫牌胜率网络
+│   │   ├── farmer.py        # 农民胜率网络
+│   │   └── landlord.py      # 地主胜率网络
+│   ├── engine/
+│   │   └── search.py        # 残局「一手跑完」路径搜索
+│   └── ui/
+│       ├── main_window.ui   # Qt Designer 源文件
+│       ├── main_window.py   # pyuic5 生成（改 .ui 后需重新生成）
+│       └── resources_rc.py  # picture.qrc 编译产物
+├── douzero/                 # 内嵌并适配过的 DouZero 库（env / dmc / evaluation）
+├── baselines/resnet/        # DouZero 出牌模型
+├── weights/                 # 叫牌/加倍胜率模型
+├── pics/                    # 95 张模板图（牌面 + 按钮/弹窗）
+├── music/                   # 提示音
+├── tests/                   # 回归测试 + 环境自检脚本
+├── tools/debug_screenshot.py# 坐标调试小工具
+├── logs/                    # 运行日志与识别失败现场截图（不入库）
+├── style.qss / picture.qrc / LICENSE / 使用说明.docx
+```
+
+改动界面后重新生成代码：
+
+```powershell
+# 改 hlddz/ui/main_window.ui 之后
+python -m PyQt5.uic.pyuic hlddz/ui/main_window.ui -o hlddz/ui/main_window.py
+```
+
+### 代码分层
+
+| 层 | 位置 | 职责 |
+|---|---|---|
+| 入口 | `hlddz/app.py:main`、`hlddz/__main__.py` | 创建 QApplication、装配窗口 |
+| 界面 | `hlddz/app.py`、`hlddz/ui/` | 记牌器、出牌展示、阈值面板、按钮 |
+| 编排 | `hlddz/worker.py:Worker` | QThread 状态机：等开局 → 叫牌/加倍 → 识别 → 出牌 → 跟牌 |
+| 感知 | `hlddz/perception/` | 截图归一化、模板匹配、牌面识别、点击坐标换算 |
+| 决策 | `douzero/`、`hlddz/models/`、`hlddz/engine/` | DouZero 出牌估值、胜率网络、残局搜索 |
 ```
 
 ## 常见问题

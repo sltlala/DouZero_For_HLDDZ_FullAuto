@@ -305,9 +305,13 @@ class GameEnv(object):
             # 只能按张数删除；players 是 dict（自对局，三家手牌都真实）时全部按牌面精确删除。
             my_position = self.players[0] if isinstance(self.players, (list, tuple)) else None
             if my_position is None or self.acting_player_position == my_position:
-                # 更新玩家手牌，删除对应的牌
+                # 更新玩家手牌，删除对应的牌。
+                # 识别偶有偏差时会出现“要删的牌不在自己手里”，此时跳过而不是抛异常，
+                # 否则整局会因为一张牌没认对而中断（实测出现过 remove() ValueError）。
                 for card in action:
-                    self.info_sets[self.acting_player_position].player_hand_cards.remove(card)
+                    hand = self.info_sets[self.acting_player_position].player_hand_cards
+                    if card in hand:
+                        hand.remove(card)
             # 更新另外两个玩家手牌，删除相同数量的牌
             else:
                 del self.info_sets[self.acting_player_position].player_hand_cards[0:len(action)]

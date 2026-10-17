@@ -956,6 +956,7 @@ class Worker(QThread):
                                 # 游戏“智能选牌”可能多选/打乱，选不准则重选一次
                                 print("   选中的牌与目标不一致，重选一次")
                                 time.sleep(0.3)
+                                self.resync_hand()
                                 selected = self.click_cards(action_message["action"])
                             if not selected:
                                 # 宁可不出，也不要把错误的牌打出去
@@ -1609,6 +1610,22 @@ class Worker(QThread):
             return []
         return raised
 
+    def resync_hand(self):
+        """把手牌状态按当前识别结果重设，缓解识别偏差导致的状态漂移（出牌失败时用）。"""
+        try:
+            real = self.find_my_cards()
+            if not real:
+                return False
+            self.user_hand_cards_real = real
+            self.user_hand_cards_env = [RealCard2EnvCard[c] for c in real]
+            self.env.info_sets[self.user_position].player_hand_cards = \
+                list(self.user_hand_cards_env)
+            print("   （手牌状态已按当前识别结果重设：%s）" % real)
+            return True
+        except Exception as e:
+            print("   重设手牌失败: %s" % e)
+            return False
+
     def _is_raised(self, entry, detail=None):
         """这张牌当前是否已经处于选中（抬起）状态。"""
         detail = detail if detail is not None else self._hand_detail()
@@ -1718,6 +1735,11 @@ class Worker(QThread):
 
             else:
                 for i in out_cards:
+                    if i not in cards_dict or not cards_dict[i]:
+                        # AI 要出的牌在当前识别到的手牌里没有（识别偏差导致的状态漂移）。
+                        # 直接跳过，不要让 KeyError 把整次出牌打断。
+                        print("   手牌里没有 %s（识别偏差），跳过这一张" % i)
+                        continue
                     cars_pos = cards_dict[i][-1]
                     point = _point(cars_pos)
                     # 关键：游戏有“智能选牌”，点一张 7 可能把另一张 7 也一并选中。

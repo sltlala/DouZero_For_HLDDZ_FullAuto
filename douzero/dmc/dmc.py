@@ -12,6 +12,7 @@ from torch import nn
 from .file_writer import FileWriter
 from .models import Model, OldModel
 from .env_utils import get_device
+from .arguments import parser
 from .utils import get_batch, log, create_env, create_buffers, create_optimizers, act
 
 mean_episode_return_buf = {p:deque(maxlen=100) for p in ['landlord', 'landlord_up', 'landlord_down']}
@@ -248,3 +249,12 @@ def train(flags):
 
     checkpoint(frames)
     plogger.close()
+
+
+def main(argv=None):
+    """命令行入口：douzero-train / python -m douzero.dmc.dmc"""
+    train(parser.parse_args(argv))
+
+
+if __name__ == '__main__':
+    main()

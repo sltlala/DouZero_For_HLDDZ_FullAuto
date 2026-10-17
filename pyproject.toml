@@ -50,8 +50,12 @@ dependencies = [
 train = ["gitpython>=3.1"]
 dev = ["pytest>=7.4"]
 
+[project.scripts]
+# 训练入口（等价于 python -m douzero.dmc.dmc）
+douzero-train = "douzero.dmc.dmc:main"
+
 [project.gui-scripts]
-# 等价于 `python mian.py`（必须在项目根目录启动，程序用相对路径读 data.json / pics / music）
+# 等价于 `python mian.py`（资源路径已由 app_paths.py 解析为绝对路径）
 douzero-hlddz = "mian:main"
 
 [tool.setuptools]

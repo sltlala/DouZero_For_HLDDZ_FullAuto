@@ -938,6 +938,8 @@ class Worker(QThread):
                                 if now_hand < before_hand:
                                     break
                                 print("\n出牌未生效（手牌仍 %d 张），重试选牌并点出牌" % now_hand)
+                                if attempt == 2:
+                                    self.save_debug_shot("play_stuck")
                                 self.click_cards(action_message["action"])
                                 time.sleep(0.4)
                                 self.click_action("play_card", True, self.PassBtnPos)
@@ -1326,18 +1328,29 @@ class Worker(QThread):
             boxes = []
             for i in range(1, n):
                 x, y, w, h, area = stats[i]
-                if area < 2000 or h < 30 or h > 100 or w < 60 or w > 400:
+                # 按钮实测尺寸：约 137x60 ~ 205x65，长宽比 2~3.2。
+                # 这里收紧过滤，避免把“剩余牌数/当前这一手”等亮色元素也当成按钮
+                if area < 2000 or h < 45 or h > 90 or w < 90 or w < 0 or w > 260:
                     continue
-                if not (1.2 <= w / float(h) <= 6):
+                if not (1.5 <= w / float(h) <= 4.0):
                     continue
                 boxes.append((int(x) + x0, int(y) + y0, int(w), int(h)))
-            boxes.sort()
             if len(boxes) < 2:
                 return boxes
-            # 只保留同一水平线上的按钮（y 中心相差不超过按钮高度的一半）
-            mid = boxes[0][1] + boxes[0][3] / 2.0
-            boxes = [b for b in boxes if abs(b[1] + b[3] / 2.0 - mid) <= max(b[3] for b in boxes) * 0.6]
-            return boxes
+            # 先按 y 中心聚成“一行”，取元素最多的那一行，再按 x 排序；
+            # 这样即使别处有亮色块，也不会把真正的按钮挤掉。
+            boxes.sort(key=lambda b: b[1] + b[3] / 2.0)
+            rows = []
+            for b in boxes:
+                cy = b[1] + b[3] / 2.0
+                if rows and abs(cy - rows[-1][0]) <= 12:
+                    rows[-1][1].append(b)
+                    rows[-1][0] = sum(x[1] + x[3] / 2.0 for x in rows[-1][1]) / len(rows[-1][1])
+                else:
+                    rows.append([cy, [b]])
+            best_row = max(rows, key=lambda r: len(r[1]))[1]
+            best_row.sort()
+            return best_row
         except Exception:
             return []
 
@@ -1351,6 +1364,7 @@ class Worker(QThread):
         boxes = self.find_action_buttons()
         if not boxes:
             return False
+        print("   检出按钮: %s" % [(b[0], b[1], b[2], b[3]) for b in boxes])
         target = None
         if template:
             try:

@@ -761,6 +761,7 @@ class Worker(QThread):
 
         # 识别玩家手牌
         self.user_hand_cards_real = self.find_my_cards()
+        self.recorder_preview()
         hand_tries = 0
         expect_hand = 20 if self.user_position_code == 1 else 17
         hand_deadline = time.time() + 10
@@ -792,8 +793,7 @@ class Worker(QThread):
         # 整副牌减去玩家手上的牌，就是其他人的手牌,再分配给另外两个角色（如何分配对AI判断没有影响）
         for i in set(AllEnvCard):
             self.other_hand_cards.extend([i] * (AllEnvCard.count(i) - self.user_hand_cards_env.count(i)))
-        self.other_hands_cards_str = str(''.join([EnvCard2RealCard[c] for c in self.other_hand_cards]))[::-1]
-        self.recorder_display.emit(self.other_hands_cards_str)
+        self.emit_recorder()
         self.card_play_data_list.update({
             'three_landlord_cards': self.three_cards_env,
             ['landlord_up', 'landlord', 'landlord_down'][(self.user_position_code + 0) % 3]:
@@ -1481,6 +1481,36 @@ class Worker(QThread):
                     pass
         except Exception as e:
             print("保存诊断截图失败:", repr(e))
+
+    def emit_recorder(self):
+        """刷新界面记牌器（整副牌 − 我的手牌 = 其余玩家的牌）。
+
+        之前只在 init_cards 里算一次，若开局流程卡在叫牌阶段就一直显示 0。
+        现在识别出手牌后立即刷新一次，并把各牌数量打进日志便于核对。
+        """
+        try:
+            self.other_hands_cards_str = str(
+                ''.join([EnvCard2RealCard[c] for c in self.other_hand_cards]))[::-1]
+            print("记牌器: %s" % " ".join(
+                "%s=%d" % (c, self.other_hands_cards_str.count(c)) for c in AllCards))
+            self.recorder_display.emit(self.other_hands_cards_str)
+        except Exception as e:
+            print("记牌器刷新失败: %s" % e)
+
+    def recorder_preview(self):
+        """按当前已识别的手牌先刷新一次记牌器（不修改 other_hand_cards）。"""
+        try:
+            if len(self.user_hand_cards_real) not in (17, 20):
+                return
+            mine = [RealCard2EnvCard[c] for c in self.user_hand_cards_real]
+            others = []
+            for c in set(AllEnvCard):
+                others.extend([c] * (AllEnvCard.count(c) - mine.count(c)))
+            s = str(''.join([EnvCard2RealCard[c] for c in others]))[::-1]
+            print("记牌器(预览): %s" % " ".join("%s=%d" % (c, s.count(c)) for c in AllCards))
+            self.recorder_display.emit(s)
+        except Exception as e:
+            print("记牌器预览失败: %s" % e)
 
     def _hand_detail(self):
         """当前手牌的识别明细（每张牌含位置与分数）。"""

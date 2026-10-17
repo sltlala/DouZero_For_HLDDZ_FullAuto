@@ -1643,14 +1643,26 @@ class Worker(QThread):
         base = max(d[2] for d in detail)
         return best[2] < base - 8
 
-    def _fix_selection(self, out_cards, cards_dict, point_fn, rounds=2):
+    def _fix_selection(self, out_cards, cards_dict, point_fn, rounds=1, clicked=None):
         """核对选中的牌与目标组合是否一致：漏的补点、多选的取消。
 
-        游戏有“智能选牌”（点一张可能把同点数的一起选中），
-        只靠“点一下就完事”很容易选错，所以每轮选完都核对整个组合。
-        判断不出选中状态时不做任何纠正，避免越点越乱。
+        游戏有“智能选牌”（点一张可能把同点数的一起选中），所以选完要核对。
+        但纠正也只允许点一次：同一张牌重复点会把它取消掉（用户实测的“点两下”），
+        因此这里用 clicked 集合拦住重复点击，并且默认只纠正一轮。
+        判断不出选中状态时不做任何纠正。
         """
         from collections import Counter
+
+        def _click(entry):
+            pt = point_fn(entry)
+            key = (pt[0] // 6, pt[1] // 6)
+            if clicked is not None:
+                if key in clicked:
+                    return False
+                clicked.add(key)
+            helper.LeftClick2(pt)
+            time.sleep(0.12)
+            return True
 
         target = Counter(out_cards)
         for _ in range(rounds):
@@ -1668,11 +1680,10 @@ class Worker(QThread):
                      ("；漏选 " + "".join(sorted(missing.elements()))) if missing else ""))
             for value, cnt in extra.items():
                 for d in [d for d in raised if d[0] == value][:cnt]:
-                    helper.LeftClick2((d[1] + d[3] // 2, d[2] + d[4] // 2))
-                    time.sleep(0.12)
+                    _click(d)
             for value, cnt in missing.items():
                 for e in (cards_dict.get(value) or [])[-cnt:]:
-                    helper.LeftClick2(point_fn(e))
+                    _click(e)
                     time.sleep(0.12)
             time.sleep(0.15)
 
@@ -1726,40 +1737,48 @@ class Worker(QThread):
             cards_dict = dict(cards_dict)
             remove_dict = {key: [] for key in cards_dict.keys()}
 
-            # 先把上一次残留的“已选中”牌取消掉（选中后手牌会抬起），
-            # 避免叠加选择导致“选不到对应的牌”
-            for d in self._raised_entries(self._hand_detail()):
-                helper.LeftClick2((d[1] + d[3] // 2, d[2] + d[4] // 2))
-                time.sleep(0.08)
+            # 同一张牌在一次选牌里最多点一次：多点一次就会把它取消掉
+            # （用户实测“点两下，把选好的牌又取消了”就是重复点击造成的）
+            clicked_points = set()
+
+            def _click_once(entry, tag=""):
+                pt = _point(entry)
+                key = (pt[0] // 6, pt[1] // 6)      # 相近坐标视为同一张牌
+                if key in clicked_points:
+                    print("   %s 本次已点过，跳过重复点击" % (tag or "牌"))
+                    return False
+                clicked_points.add(key)
+                helper.LeftClick2(pt)
+                time.sleep(0.12)
+                return True
 
             # print(cards_dict)
             selected_ok = True
             if out_cards == "DX" and "X" in cards_dict:
-                helper.LeftClick2(_point(cards_dict["X"][0]))
+                _click_once(cards_dict["X"][0], "X")
                 time.sleep(0.5)
 
             else:
-                for i in out_cards:
-                    if i not in cards_dict or not cards_dict[i]:
-                        # AI 要出的牌在当前识别到的手牌里没有（识别偏差导致的状态漂移）。
-                        # 直接跳过，不要让 KeyError 把整次出牌打断。
-                        print("   手牌里没有 %s（识别偏差），跳过这一张" % i)
-                        continue
-                    cars_pos = cards_dict[i][-1]
-                    point = _point(cars_pos)
-                    # 关键：游戏有“智能选牌”，点一张 7 可能把另一张 7 也一并选中。
-                    # 所以点之前先看这张牌是不是已经抬起（已选中），已选中就不再点，
-                    # 否则会把它点掉、后面就越选越乱。
-                    if self._is_raised(cars_pos):
-                        print("   %s 已被游戏自动选中，跳过点击" % i)
-                    else:
-                        helper.LeftClick2(point)
-                        time.sleep(0.12)
-                    remove_dict[i].append(cards_dict[i][-1])
-                    cards_dict[i].remove(cards_dict[i][-1])
+                # 按点数分组点击：游戏“智能选牌”点一张就会把同点数的都选上，
+                # 所以每个点数先点一张，再按缺少的张数补点，避免反复点同一张。
+                from collections import Counter as _Counter
 
-                # 选完牌后核对整个组合：既补漏，也取消多选的
-                selected_ok = self._fix_selection(out_cards, cards_dict, _point)
+                need_by_rank = _Counter(out_cards)
+                for rank, need_cnt in need_by_rank.items():
+                    entries = list(cards_dict.get(rank) or [])
+                    if not entries:
+                        print("   手牌里没有 %s（识别偏差），跳过这一张" % rank)
+                        continue
+                    _click_once(entries[0], rank)
+                    raised = [d for d in self._raised_entries(self._hand_detail()) if d[0] == rank]
+                    if len(raised) < need_cnt:
+                        for e in entries[1:need_cnt]:
+                            _click_once(e, rank)
+                    remove_dict.setdefault(rank, [])
+
+                # 选完牌后核对整个组合：只补漏，并把同一张牌排除在重复点击之外
+                selected_ok = self._fix_selection(out_cards, cards_dict, _point,
+                                                  clicked=clicked_points)
 
                 img, _ = helper.Screenshot()
                 img = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
@@ -1772,27 +1791,22 @@ class Worker(QThread):
                         cards = cards.replace(m, "", 1)
                     # print("系统多点的牌： ", cards)
                     for n in cards:
-                        # print("字典里还剩的牌： ", cards_dict)
-                        cars_pos2 = cards_dict[n][-1]
-                        # print("准备点回来的牌：", cars_pos2)
-                        point2 = _point(cars_pos2)
-                        helper.LeftClick2(point2)
+                        entries = cards_dict.get(n) or []
+                        if not entries:
+                            continue
+                        helper.LeftClick2(_point(entries[-1]))
                         time.sleep(0.1)
-                        remove_dict[n].append(cards_dict[n][-1])
-                        cards_dict[n].remove(cards_dict[n][-1])
                 elif len(check_cards) > len(cards):
                     for m in cards:
                         check_cards = check_cards.replace(m, "", 1)
                     # print("系统少点的牌： ", check_cards)
                     for n in check_cards:
-                        # print("删除的字典： ", remove_dict)
-                        cars_pos3 = remove_dict[n][0]
-                        # print("准备再点出去的牌：", cars_pos3)
-                        point3 = _point(cars_pos3)
-                        helper.LeftClick2(point3)
+                        entries = remove_dict.get(n) or []
+                        if not entries:
+                            continue
+                        helper.LeftClick2(_point(entries[0]))
                         time.sleep(0.3)
-                        remove_dict[n].remove(remove_dict[n][0])
-                        # print(remove_dict)
+                        entries.pop(0)
         except Exception as e:
             print("检测到出牌错误")
             traceback.print_exc()

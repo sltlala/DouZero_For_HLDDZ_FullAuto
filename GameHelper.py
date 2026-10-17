@@ -155,6 +155,10 @@ class GameHelper:
         self.Handle = win32gui.FindWindow("UnityWndClass", None)
         self.Interrupt = False
         self.RealRate = (1440, 810)
+        # 一次性告警标记，避免每次截图都刷屏
+        self._minimized_warned = False
+        self._active_warned = False
+        self._move_warned = False
         self.GetZoomRate()
         for file in os.listdir(PICS_DIR):
             info = file.split(".")
@@ -177,11 +181,37 @@ class GameHelper:
             try:
                 try_count -= 1
                 self.Handle = win32gui.FindWindow("UnityWndClass", None)
-                win32gui.SetActiveWindow(self.Handle)
                 hwnd = self.Handle
+                if not hwnd:
+                    print("未找到游戏窗口（UnityWndClass），请先以窗口模式启动欢乐斗地主")
+                    self.sleep(200)
+                    continue
+
+                # 窗口已最小化时 PrintWindow 只能抓到标题栏大小的黑图，直接提示并重试
+                if win32gui.IsIconic(hwnd):
+                    if not self._minimized_warned:
+                        print("游戏窗口已最小化，无法识别：请从任务栏恢复窗口（允许被遮挡，但不能最小化）")
+                        self._minimized_warned = True
+                    self.sleep(200)
+                    continue
+
+                # SetActiveWindow / MoveWindow 只是为了让窗口前置并固定为 1440x810。
+                # 当游戏以管理员运行而本程序未提权时会被 UIPI 拒绝（error 5），
+                # 但后台截图 PrintWindow 本身仍可用，所以失败不应中断整个截图流程。
+                try:
+                    win32gui.SetActiveWindow(hwnd)
+                except Exception as e:
+                    if not self._active_warned:
+                        print("SetActiveWindow 被拒绝（不影响后台截图）:", repr(e))
+                        self._active_warned = True
+
                 left, top, right, bot = win32gui.GetWindowRect(hwnd)
-                # 调整窗口大小
-                win32gui.MoveWindow(hwnd, left, top, 1440, 810, True)
+                try:
+                    win32gui.MoveWindow(hwnd, left, top, 1440, 810, True)
+                except Exception as e:
+                    if not self._move_warned:
+                        print("MoveWindow 被拒绝（窗口若不是 1440x810，识别可能不准）:", repr(e))
+                        self._move_warned = True
                 width = 1440
                 height = 810
                 self.RealRate = (width, height)

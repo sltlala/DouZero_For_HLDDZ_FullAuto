@@ -1,12 +1,23 @@
 # -*- coding: utf-8 -*-
 # Created by: Vincentzyx
+#
+# 叫牌/加倍用的“手牌 -> 得分”回归网络。
+#
+# 历史问题（已修复）：
+#   本文件曾同时定义 Net(全连接 fc1..fc6) 与 Net2(卷积 conv1 + dense1..5)，
+#   而 weights/bid_weights.pkl 里保存的键名是 conv1.* / dense1..5.*，即 Net2 的权重；
+#   旧代码把权重复制进 net2，却用从未加载过权重的 net 去做 predict()，
+#   等于用随机初始化的网络出分。现在只保留与权重匹配的 Net2，并删除那个失效的 predict()。
 import os
+
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
-from torch.utils.data.dataset import Dataset
-import time
 import torch.nn.functional as F
+
+from app_paths import WEIGHTS_DIR
+
+# 权重文件（绝对路径，不依赖当前工作目录）
+WEIGHTS_PATH = str(WEIGHTS_DIR / "bid_weights.pkl")
 
 
 def EnvToOnehot(cards):
@@ -30,10 +41,11 @@ def RealToOnehot(cards):
 
 
 class Net2(nn.Module):
+    """输入 1*60（4*15 的持牌 one-hot 展平），输出一个标量得分。"""
+
     def __init__(self):
         super().__init__()
-        # input: 1 * 60
-        self.conv1 = nn.Conv1d(1, 16, kernel_size=(3,), padding=1)  # 32 * 60
+        self.conv1 = nn.Conv1d(1, 16, kernel_size=(3,), padding=1)
         self.dense1 = nn.Linear(1020, 1024)
         self.dense2 = nn.Linear(1024, 512)
         self.dense3 = nn.Linear(512, 256)
@@ -53,65 +65,45 @@ class Net2(nn.Module):
         return x
 
 
-class Net(nn.Module):
-    def __init__(self):
-        super().__init__()
+UseGPU = torch.cuda.is_available()
+device = torch.device('cuda:0') if UseGPU else torch.device('cpu')
 
-        self.fc1 = nn.Linear(60, 512)
-        self.fc2 = nn.Linear(512, 512)
-        self.fc3 = nn.Linear(512, 512)
-        self.fc4 = nn.Linear(512, 512)
-        self.fc5 = nn.Linear(512, 512)
-        self.fc6 = nn.Linear(512, 1)
-        self.dropout5 = nn.Dropout(0.5)
-        self.dropout3 = nn.Dropout(0.3)
-        self.dropout1 = nn.Dropout(0.1)
-
-    def forward(self, input):
-        x = self.fc1(input)
-        x = torch.relu(self.dropout1(self.fc2(x)))
-        x = torch.relu(self.dropout3(self.fc3(x)))
-        x = torch.relu(self.dropout5(self.fc4(x)))
-        x = torch.relu(self.dropout5(self.fc5(x)))
-        x = self.fc6(x)
-        return x
-
-
-UseGPU = False
-device = torch.device('cuda:0')
-net = Net()
 net2 = Net2()
-net.eval()
+
+
+def _load_weights(model, path):
+    """加载权重，并把“键名不匹配”变成显式报错，避免再出现静默使用随机权重的情况。"""
+    if not os.path.exists(path):
+        print("[BidModel] 警告: 未找到 {}，叫牌得分将是随机值！".format(path))
+        return False
+    state = torch.load(path, map_location=device)
+    own = model.state_dict()
+    matched = {k: v for k, v in state.items() if k in own and tuple(v.shape) == tuple(own[k].shape)}
+    if len(matched) != len(own):
+        missing = [k for k in own if k not in matched]
+        print("[BidModel] 警告: {} 与网络结构不匹配，缺少 {} 个参数: {}".format(path, len(missing), missing[:5]))
+    model.load_state_dict(matched, strict=False)
+    return len(matched) == len(own)
+
+
+_loaded = _load_weights(net2, WEIGHTS_PATH)
 net2.eval()
 if UseGPU:
-    net = net.to(device)
     net2 = net2.to(device)
-
-if os.path.exists("./weights/bid_weights.pkl"):
-    if torch.cuda.is_available():
-        net2.load_state_dict(torch.load('./weights/bid_weights.pkl'))
-    else:
-        net2.load_state_dict(torch.load('./weights/bid_weights.pkl', map_location=torch.device("cpu")))
-
-
-def predict(cards):
-    input = RealToOnehot(cards)
-    if UseGPU:
-        input = input.to(device)
-    input = torch.flatten(input)
-    win_rate = net(input)
-    return win_rate[0].item() * 100
 
 
 def predict_score(cards):
+    """返回叫牌/加倍用的原始得分（界面上的“叫牌得分”），阈值见 data.json 的 bid1~bid3。"""
     input = RealToOnehot(cards)
     if UseGPU:
         input = input.to(device)
     input = torch.flatten(input)
     input = input.unsqueeze(0)
-    result = net2(input)
+    with torch.no_grad():
+        result = net2(input)
     return result[0].item()
 
 
 if __name__ == "__main__":
+    print("weights loaded:", _loaded)
     print(predict_score("333444569TTJJQKK2"))

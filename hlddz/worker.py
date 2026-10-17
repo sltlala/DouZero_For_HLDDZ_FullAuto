@@ -1482,6 +1482,33 @@ class Worker(QThread):
         except Exception as e:
             print("保存诊断截图失败:", repr(e))
 
+    def _hand_detail(self):
+        """当前手牌的识别明细（每张牌含位置与分数）。"""
+        try:
+            img, _ = helper.Screenshot()
+            if img is None:
+                return []
+            bgr = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
+            return self.find_cards_detail(bgr, self.MyHandCardsPos, mark="m")
+        except Exception:
+            return []
+
+    def _raised_entries(self, detail=None):
+        """返回“已选中（被抬起）”的牌。
+
+        选中后手牌会向上抬约 15~25px，所以按 y 分成两簇即可判断。
+        只有明确是「少数牌被抬起」时才返回，判断不可靠一律返回空，
+        避免把未选中的牌照当成已选中去点（那会把牌选错）。
+        """
+        detail = detail if detail is not None else self._hand_detail()
+        if len(detail) < 2:
+            return []
+        base = max(d[2] for d in detail)
+        raised = [d for d in detail if d[2] < base - 8]
+        if not raised or len(raised) >= len(detail) - len(raised):
+            return []
+        return raised
+
     def click_cards(self, out_cards):
         try:
             cards = self.find_my_cards()
@@ -1525,8 +1552,15 @@ class Worker(QThread):
             # 转换为普通的字典
             cards_dict = dict(cards_dict)
             remove_dict = {key: [] for key in cards_dict.keys()}
+
+            # 先把上一次残留的“已选中”牌取消掉（选中后手牌会抬起），
+            # 避免叠加选择导致“选不到对应的牌”
+            for d in self._raised_entries(self._hand_detail()):
+                helper.LeftClick2((d[1] + d[3] // 2, d[2] + d[4] // 2))
+                time.sleep(0.08)
+
             # print(cards_dict)
-            if out_cards == "DX":
+            if out_cards == "DX" and "X" in cards_dict:
                 helper.LeftClick2(_point(cards_dict["X"][0]))
                 time.sleep(0.5)
 
@@ -1555,6 +1589,28 @@ class Worker(QThread):
                     remove_dict[i].append(cards_dict[i][-1])
                     cards_dict[i].remove(cards_dict[i][-1])
                     # print("remove_dict", remove_dict)
+
+                # 选完牌后自校验：抬起的牌张数应等于要出的张数，不对就补点。
+                # 这是「经常选不到对应的牌」的直接对策。
+                try:
+                    detail_after = self._hand_detail()
+                    raised = self._raised_entries(detail_after)
+                    if raised:
+                        need = list(out_cards)
+                        for d in raised:
+                            if d[0] in need:
+                                need.remove(d[0])
+                        if need:
+                            print("   选牌校验：期望 %d 张，已选中 %d 张，补点 %s"
+                                  % (len(out_cards), len(raised), "".join(need)))
+                            for value in need:
+                                entries = cards_dict.get(value)
+                                if entries:
+                                    helper.LeftClick2(_point(entries[-1]))
+                                    time.sleep(0.12)
+                except Exception as e:
+                    print("   选牌校验失败: %s" % e)
+
                 img, _ = helper.Screenshot()
                 img = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
                 check_cards = self.find_cards(img, self.MyHandCardsPos, mark="m")

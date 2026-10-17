@@ -10,7 +10,8 @@ from torch import multiprocessing as mp
 from torch import nn
 
 from .file_writer import FileWriter
-from .models import Model
+from .models import Model, OldModel
+from .env_utils import get_device
 from .utils import get_batch, log, create_env, create_buffers, create_optimizers, act
 
 mean_episode_return_buf = {p:deque(maxlen=100) for p in ['landlord', 'landlord_up', 'landlord_down']}
@@ -27,21 +28,26 @@ def learn(position,
           flags,
           lock):
     """Performs a learning (optimization) step."""
-    device = torch.device('cuda:'+str(flags.training_device)) 
-    obs_x_no_action = batch['obs_x_no_action'].to(device)
-    obs_action = batch['obs_action'].to(device)
-    obs_x = torch.cat((obs_x_no_action, obs_action), dim=2).float()
-    obs_x = torch.flatten(obs_x, 0, 1)
+    device = get_device(flags.training_device)
+    obs_x = batch['obs_x_no_action'].to(device)
+    if 'obs_action' in batch:
+        # old 编码：x = [状态特征, 动作特征]；resnet 编码的动作已在 obs_z 里，不再拼接
+        obs_x = torch.cat((obs_x, batch['obs_action'].to(device)), dim=2)
+    obs_x = torch.flatten(obs_x, 0, 1).float()
     obs_z = torch.flatten(batch['obs_z'].to(device), 0, 1).float()
     target = torch.flatten(batch['target'].to(device), 0, 1)
     episode_returns = batch['episode_return'][batch['done']]
-    mean_episode_return_buf[position].append(torch.mean(episode_returns).to(device))
-        
+    # 一个 unroll 窗口里可能没有任何 done=True（小 batch 尤其常见），
+    # 对空张量取均值会得到 NaN，导致日志里的 mean_episode_return 永远是 nan
+    if episode_returns.numel() > 0:
+        mean_episode_return_buf[position].append(torch.mean(episode_returns).to(device))
+
     with lock:
         learner_outputs = model(obs_z, obs_x, return_value=True)
         loss = compute_loss(learner_outputs['values'], target)
+        _return_buf = list(mean_episode_return_buf[position])
         stats = {
-            'mean_episode_return_'+position: torch.mean(torch.stack([_r for _r in mean_episode_return_buf[position]])).item(),
+            'mean_episode_return_'+position: torch.mean(torch.stack(_return_buf)).item() if _return_buf else 0.0,
             'loss_'+position: loss.item(),
         }
         
@@ -75,8 +81,10 @@ def train(flags):
     # Initialize actor models
     models = []
     assert flags.num_actor_devices <= len(flags.gpu_devices.split(',')), 'The number of actor devices can not exceed the number of available devices'
+    # old 编码用 LSTM 系列，resnet/general 用 Model（ResnetModel）
+    model_cls = OldModel if getattr(flags, 'model_type', 'resnet') == 'old' else Model
     for device in range(flags.num_actor_devices):
-        model = Model(device=device)
+        model = model_cls(device=get_device(device))
         model.share_memory()
         model.eval()
         models.append(model)
@@ -96,7 +104,7 @@ def train(flags):
         full_queue.append(_full_queue)
 
     # Learner model for training
-    learner_model = Model(device=flags.training_device)
+    learner_model = model_cls(device=get_device(flags.training_device))
 
     # Create optimizers
     optimizers = create_optimizers(flags, learner_model)
@@ -116,7 +124,7 @@ def train(flags):
     # Load models if any
     if flags.load_model and os.path.exists(checkpointpath):
         checkpoint_states = torch.load(
-                checkpointpath, map_location="cuda:"+str(flags.training_device)
+                checkpointpath, map_location=get_device(flags.training_device)
         )
         for k in ['landlord', 'landlord_up', 'landlord_down']:
             learner_model.get_model(k).load_state_dict(checkpoint_states["model_state_dict"][k])
@@ -194,6 +202,7 @@ def train(flags):
             torch.save(learner_model.get_model(position).state_dict(), model_weights_dir)
 
     timer = timeit.default_timer
+    interrupted = False
     try:
         last_checkpoint_time = timer() - flags.save_interval * 60
         while frames < flags.total_frames:
@@ -221,11 +230,21 @@ def train(flags):
                          pprint.pformat(stats))
 
     except KeyboardInterrupt:
-        return 
+        interrupted = True
     else:
         for thread in threads:
             thread.join()
         log.info('Learning finished after %d frames.', frames)
+    finally:
+        # 旧代码从不结束 actor 进程：actor 里是 while True，主进程退出时会被
+        # multiprocessing 的 atexit 逻辑 join 住，表现为「训练跑完了但命令行永远不返回」。
+        for actor in actor_processes:
+            actor.terminate()
+        for actor in actor_processes:
+            actor.join(timeout=5)
+
+    if interrupted:
+        return
 
     checkpoint(frames)
     plogger.close()

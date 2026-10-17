@@ -1,3 +1,7 @@
+# ⚠️ 遗留实现，仓库内零引用：仅供对照。
+#   - 本文件是最接近上游 DouZero 的干净版本（不依赖宿主 search_utility），可独立导入；
+#   - 线上对局与训练实际使用的是 douzero/env/game.py（带 heuristics 开关）；
+#   - 其 step(position, action=[]) 签名、win_rate 缩放与 game.py 都不一致，不要混用。
 from copy import deepcopy
 from . import move_detector as md, move_selector as ms
 from .move_generator import MovesGener

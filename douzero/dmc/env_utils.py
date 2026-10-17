@@ -4,15 +4,29 @@ to use. When a game is finished, instead of mannualy reseting
 the environment, we do it automatically.
 """
 import numpy as np
-import torch 
+import torch
+
+
+def get_device(device=0):
+    """返回真正可用的 torch 设备。
+
+    旧代码在多处硬编码 `torch.device('cuda:' + str(device))`，在没有 GPU 的机器上
+    直接抛 RuntimeError；这里统一降级到 CPU，训练/自对局才能在任何机器上跑起来。
+    """
+    if isinstance(device, torch.device):
+        return device
+    if torch.cuda.is_available():
+        return torch.device('cuda:' + str(device))
+    return torch.device('cpu')
+
 
 def _format_observation(obs, device):
     """
     A utility function to process observations and
-    move them to CUDA.
+    move them to the proper device (cuda or cpu).
     """
     position = obs['position']
-    device = torch.device('cuda:'+str(device))
+    device = get_device(device)
     x_batch = torch.from_numpy(obs['x_batch']).to(device)
     z_batch = torch.from_numpy(obs['z_batch']).to(device)
     x_no_action = torch.from_numpy(obs['x_no_action'])

@@ -33,8 +33,16 @@ def action_in_tree(path_list, action):
 
 
 def search_actions(my_cards, other_cards, path_list, rival_move=None, prev_moves=None):
+    """枚举所有「对手压不住、能一路把牌打完」的出牌顺序，结果原地追加进 path_list。
+
+    返回 path_list 本身。
+    历史问题（已修复）：旧版末尾无条件 `return None`，导致
+      1) 函数只能靠修改传入的 path_list 这个副作用传结果，极易误用；
+      2) 递归里的 `if actions is not None ...` 恒为假，整段分支是死代码。
+    path_list 超过 100 条时提前停止搜索。
+    """
     if len(path_list) > 100:
-        return None
+        return path_list
     if prev_moves is None:
         my_cards.sort()
         other_cards.sort()
@@ -42,9 +50,6 @@ def search_actions(my_cards, other_cards, path_list, rival_move=None, prev_moves
     other_gener = MovesGener(other_cards)
     other_bombs = other_gener.gen_type_4_bomb()
     other_bombs.extend(other_gener.gen_type_5_king_bomb())
-    my_bombs = my_gener.gen_type_4_bomb()
-    my_bombs.extend(my_gener.gen_type_5_king_bomb())
-    legal_move_tree = []
     rival_move_info = {}
     type_range = [4, 5, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
     if rival_move is not None:
@@ -86,11 +91,10 @@ def search_actions(my_cards, other_cards, path_list, rival_move=None, prev_moves
                         new_prev.append(move)
                     else:
                         new_prev = [move]
-                    actions = search_actions(new_cards, other_cards, path_list, prev_moves=new_prev)
+                    # 递归只负责继续向 path_list 追加更长的完整路径，返回值不再使用
+                    search_actions(new_cards, other_cards, path_list, prev_moves=new_prev)
                     del new_prev
                     del new_cards
-                    if actions is not None and len(actions) > 0:
-                        legal_move_tree.append([move, actions])
             else:
                 if rival_move is not None:
                     move_info = get_move_type(move)
@@ -101,21 +105,14 @@ def search_actions(my_cards, other_cards, path_list, rival_move=None, prev_moves
                         continue
                     if rival_move_info["type"] == 5:
                         continue
-                legal_move_tree.append(move)
                 if prev_moves is not None:
                     new_path = prev_moves.copy()
                     new_path.append(move)
                     path_list.append(new_path)
                 else:
                     path_list.append([move])
-    legal_moves_count = len(legal_move_tree)
-    del my_gener, other_gener, my_bombs, other_bombs, my_cards, other_cards, legal_move_tree
-    return None
-    # if legal_moves_count == 0:
-    #     return None
-    # if legal_moves_count == 1:
-    #     return legal_move_tree[0]
-    # return legal_move_tree
+    del my_gener, other_gener, other_bombs, my_cards, other_cards
+    return path_list
 
 
 def eval_path(path):

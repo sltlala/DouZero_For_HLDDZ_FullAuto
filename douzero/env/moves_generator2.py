@@ -1,3 +1,6 @@
+# ⚠️ 遗留实现，仓库内零引用：仅供对照。
+#   - 与 move_generator.py 的 MovesGener 同接口的另一版实现（预计算 repeats_dict 缓存）；
+#   - 实际使用的是 move_generator.py；本文件的 _gen_serial_moves 不排序，语义有细微差别。
 from douzero.env.utils import MIN_SINGLE_CARDS, MIN_PAIRS, MIN_TRIPLES, select
 import collections
 import itertools

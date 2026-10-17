@@ -9,6 +9,8 @@ parser.add_argument('--save_interval', default=30, type=int,
                     help='Time interval (in minutes) at which to save the model')    
 parser.add_argument('--objective', default='adp', type=str, choices=['adp', 'wp'],
                     help='Use ADP or WP as reward (default: ADP)')    
+parser.add_argument('--model_type', default='resnet', type=str, choices=['resnet', 'old', 'general'],
+                    help='观测编码/模型类型，必须与缓冲区、learner 模型一致 (default: resnet)')
 
 # Training settings
 parser.add_argument('--gpu_devices', default='0', type=str,

@@ -25,37 +25,39 @@ from typing import Dict
 # import git
 
 
-# def gather_metadata() -> Dict:
-#     date_start = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-#     # gathering git metadata
-#     try:
-#         repo = git.Repo(search_parent_directories=True)
-#         git_sha = repo.commit().hexsha
-#         git_data = dict(
-#             commit=git_sha,
-#             branch=repo.active_branch.name,
-#             is_dirty=repo.is_dirty(),
-#             path=repo.git_dir,
-#         )
-#     except git.InvalidGitRepositoryError:
-#         git_data = None
-#     # gathering slurm metadata
-#     if 'SLURM_JOB_ID' in os.environ:
-#         slurm_env_keys = [k for k in os.environ if k.startswith('SLURM')]
-#         slurm_data = {}
-#         for k in slurm_env_keys:
-#             d_key = k.replace('SLURM_', '').replace('SLURMD_', '').lower()
-#             slurm_data[d_key] = os.environ[k]
-#     else:
-#         slurm_data = None
-#     return dict(
-#         date_start=date_start,
-#         date_end=None,
-#         successful=False,
-#         git=git_data,
-#         slurm=slurm_data,
-#         env=os.environ.copy(),
-#     )
+def gather_metadata() -> Dict:
+    date_start = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+    # gathering git metadata：gitpython 是可选依赖，未安装或当前目录不是仓库时降级为 None，
+    # 不能像旧版那样因为 import git 失败 / 调用被注释掉就让 FileWriter.__init__ 直接 NameError。
+    try:
+        import git
+        repo = git.Repo(search_parent_directories=True)
+        git_sha = repo.commit().hexsha
+        git_data = dict(
+            commit=git_sha,
+            branch=repo.active_branch.name,
+            is_dirty=repo.is_dirty(),
+            path=repo.git_dir,
+        )
+    except Exception:
+        git_data = None
+    # gathering slurm metadata
+    if 'SLURM_JOB_ID' in os.environ:
+        slurm_env_keys = [k for k in os.environ if k.startswith('SLURM')]
+        slurm_data = {}
+        for k in slurm_env_keys:
+            d_key = k.replace('SLURM_', '').replace('SLURMD_', '').lower()
+            slurm_data[d_key] = os.environ[k]
+    else:
+        slurm_data = None
+    return dict(
+        date_start=date_start,
+        date_end=None,
+        successful=False,
+        git=git_data,
+        slurm=slurm_data,
+        env=os.environ.copy(),
+    )
 
 
 class FileWriter:
@@ -82,11 +84,13 @@ class FileWriter:
 
         formatter = logging.Formatter('%(message)s')
         self._logger = logging.getLogger('palaas/out')
+        self._handlers = []
 
         # to stdout handler
         shandle = logging.StreamHandler()
         shandle.setFormatter(formatter)
         self._logger.addHandler(shandle)
+        self._handlers.append(shandle)
         self._logger.setLevel(logging.INFO)
 
         rootdir = os.path.expandvars(os.path.expanduser(rootdir))
@@ -131,6 +135,7 @@ class FileWriter:
         fhandle = logging.FileHandler(self.paths['msg'])
         fhandle.setFormatter(formatter)
         self._logger.addHandler(fhandle)
+        self._handlers.append(fhandle)
 
         self._logger.info('Saving logs data to %s', self.paths['logs'])
         self._logger.info('Saving logs\' fields to %s', self.paths['fields'])
@@ -181,6 +186,12 @@ class FileWriter:
             '%Y-%m-%d %H:%M:%S.%f')
         self.metadata['successful'] = successful
         self._save_metadata()
+        # 释放本实例注册的 handler：旧代码从不摘除，Windows 上日志文件会被一直占用，
+        # 无法删除/重命名；重复创建 FileWriter 还会让同一条日志打印多遍。
+        for handler in self._handlers:
+            self._logger.removeHandler(handler)
+            handler.close()
+        self._handlers = []
 
     def _save_metadata(self) -> None:
         with open(self.paths['meta'], 'w') as jsonfile:

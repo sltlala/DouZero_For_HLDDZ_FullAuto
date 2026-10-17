@@ -362,11 +362,15 @@ class OldModel:
     """
     def __init__(self, device=0):
         self.models = {}
-        if not device == "cpu":
-            device = 'cuda:' + str(device)
-        self.models['landlord'] = LandlordLstmModel().to(torch.device(device))
-        self.models['landlord_up'] = FarmerLstmModel().to(torch.device(device))
-        self.models['landlord_down'] = FarmerLstmModel().to(torch.device(device))
+        if isinstance(device, torch.device):
+            dev = device
+        elif device == "cpu":
+            dev = torch.device('cpu')
+        else:
+            dev = torch.device('cuda:' + str(device))
+        self.models['landlord'] = LandlordLstmModel().to(dev)
+        self.models['landlord_up'] = FarmerLstmModel().to(dev)
+        self.models['landlord_down'] = FarmerLstmModel().to(dev)
 
     def forward(self, position, z, x, training=False, flags=None):
         model = self.models[position]
@@ -399,13 +403,17 @@ class Model:
     """
     def __init__(self, device=0):
         self.models = {}
-        if not device == "cpu":
-            device = 'cuda:' + str(device)
-        # model = GeneralModel().to(torch.device(device))
-        self.models['landlord'] = ResnetModel().to(torch.device(device))
-        self.models['landlord_up'] = ResnetModel().to(torch.device(device))
-        self.models['landlord_down'] = ResnetModel().to(torch.device(device))
-        self.models['bidding'] = BidModel().to(torch.device(device))
+        if isinstance(device, torch.device):
+            dev = device
+        elif device == "cpu":
+            dev = torch.device('cpu')
+        else:
+            dev = torch.device('cuda:' + str(device))
+        # model = GeneralModel().to(dev)
+        self.models['landlord'] = ResnetModel().to(dev)
+        self.models['landlord_up'] = ResnetModel().to(dev)
+        self.models['landlord_down'] = ResnetModel().to(dev)
+        self.models['bidding'] = BidModel().to(dev)
 
     def forward(self, position, z, x, training=False, flags=None, debug=False):
         model = self.models[position]

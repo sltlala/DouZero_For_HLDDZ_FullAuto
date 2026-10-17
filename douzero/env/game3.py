@@ -1,3 +1,6 @@
+# ⚠️ 遗留实验版本，仓库内零引用：仅供对照。
+#   - 双模型切换版（手牌有炸弹用 players[1]，否则用 players2[1]），win_rate 不乘 8；
+#   - 线上对局与训练实际使用的是 douzero/env/game.py，不要混用（step 签名/数值单位都不同）。
 from copy import deepcopy
 from . import move_detector as md, move_selector as ms
 from .move_generator import MovesGener

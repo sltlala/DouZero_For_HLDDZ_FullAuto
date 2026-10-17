@@ -9,7 +9,7 @@ import time
 import torch 
 from torch import multiprocessing as mp
 
-from .env_utils import Environment
+from .env_utils import Environment, get_device
 from douzero.env import Env
 
 Card2Column = {3: 0, 4: 1, 5: 2, 6: 3, 7: 4, 8: 5, 9: 6, 10: 7,
@@ -36,7 +36,7 @@ log.setLevel(logging.INFO)
 Buffers = typing.Dict[str, typing.List[torch.Tensor]]
 
 def create_env(flags):
-    return Env(flags.objective)
+    return Env(flags.objective, model_type=getattr(flags, 'model_type', 'resnet'))
 
 def get_batch(free_queue,
               full_queue,
@@ -79,26 +79,42 @@ def create_buffers(flags):
     We create buffers for different positions as well as
     for different devices (i.e., GPU). That is, each device
     will have three buffers for the three positions.
+
+    缓冲区形状必须与 flags.model_type 对应的模型输入严格一致：
+      - resnet : x=(15,)          z=(40,54)，动作已经编码进 z 的第 0 行，不需要 obs_action
+      - old    : x=(319/430,)     z=(5,162)，动作单独放在 obs_action
+    旧代码只按 old 的形状建缓冲区，而 learner 用的是 ResnetModel，形状必然冲突。
     """
     T = flags.unroll_length
     positions = ['landlord', 'landlord_up', 'landlord_down']
+    model_type = getattr(flags, 'model_type', 'resnet')
+    num_devices = max(1, torch.cuda.device_count())
     buffers = []
-    for device in range(torch.cuda.device_count()):
+    for device in range(num_devices):
         buffers.append({})
         for position in positions:
-            x_dim = 319 if position == 'landlord' else 430
-            specs = dict(
-                done=dict(size=(T,), dtype=torch.bool),
-                episode_return=dict(size=(T,), dtype=torch.float32),
-                target=dict(size=(T,), dtype=torch.float32),
-                obs_x_no_action=dict(size=(T, x_dim), dtype=torch.int8),
-                obs_action=dict(size=(T, 54), dtype=torch.int8),
-                obs_z=dict(size=(T, 5, 162), dtype=torch.int8),
-            )
+            if model_type == 'resnet':
+                specs = dict(
+                    done=dict(size=(T,), dtype=torch.bool),
+                    episode_return=dict(size=(T,), dtype=torch.float32),
+                    target=dict(size=(T,), dtype=torch.float32),
+                    obs_x_no_action=dict(size=(T, 15), dtype=torch.int8),
+                    obs_z=dict(size=(T, 40, 54), dtype=torch.int8),
+                )
+            else:
+                x_dim = 319 if position == 'landlord' else 430
+                specs = dict(
+                    done=dict(size=(T,), dtype=torch.bool),
+                    episode_return=dict(size=(T,), dtype=torch.float32),
+                    target=dict(size=(T,), dtype=torch.float32),
+                    obs_x_no_action=dict(size=(T, x_dim), dtype=torch.int8),
+                    obs_action=dict(size=(T, 54), dtype=torch.int8),
+                    obs_z=dict(size=(T, 5, 162), dtype=torch.int8),
+                )
             _buffers: Buffers = {key: [] for key in specs}
             for _ in range(flags.num_buffers):
                 for key in _buffers:
-                    _buffer = torch.empty(**specs[key]).to(torch.device('cuda:'+str(device))).share_memory_()
+                    _buffer = torch.empty(**specs[key]).to(get_device(device)).share_memory_()
                     _buffers[key].append(_buffer)
             buffers[device][position] = _buffers
     return buffers
@@ -110,6 +126,7 @@ def act(i, device, free_queue, full_queue, model, buffers, flags):
     a free queue and full queue to syncup with the main process.
     """
     positions = ['landlord', 'landlord_up', 'landlord_down']
+    model_type = getattr(flags, 'model_type', 'resnet')
     try:
         T = flags.unroll_length
         log.info('Device %i Actor %i started.', device, i)
@@ -131,12 +148,17 @@ def act(i, device, free_queue, full_queue, model, buffers, flags):
         while True:
             while True:
                 obs_x_no_action_buf[position].append(env_output['obs_x_no_action'])
-                obs_z_buf[position].append(env_output['obs_z'])
                 with torch.no_grad():
                     agent_output = model.forward(position, obs['z_batch'], obs['x_batch'], flags=flags)
                 _action_idx = int(agent_output['action'].cpu().detach().numpy())
                 action = obs['legal_actions'][_action_idx]
-                obs_action_buf[position].append(_cards2tensor(action))
+                if model_type == 'resnet':
+                    # resnet 观测把「候选动作」编码在 z 的第 0 行，训练样本必须保存
+                    # 被选中动作对应的那一份 (40,54)，否则 learner 学到的是别的动作的特征
+                    obs_z_buf[position].append(obs['z_batch'][_action_idx].cpu())
+                else:
+                    obs_z_buf[position].append(env_output['obs_z'])
+                    obs_action_buf[position].append(_cards2tensor(action))
                 position, obs, env_output = env.step(action)
                 size[position] += 1
                 if env_output['done']:
@@ -162,7 +184,8 @@ def act(i, device, free_queue, full_queue, model, buffers, flags):
                         buffers[p]['episode_return'][index][t, ...] = episode_return_buf[p][t]
                         buffers[p]['target'][index][t, ...] = target_buf[p][t]
                         buffers[p]['obs_x_no_action'][index][t, ...] = obs_x_no_action_buf[p][t]
-                        buffers[p]['obs_action'][index][t, ...] = obs_action_buf[p][t]
+                        if 'obs_action' in buffers[p]:
+                            buffers[p]['obs_action'][index][t, ...] = obs_action_buf[p][t]
                         buffers[p]['obs_z'][index][t, ...] = obs_z_buf[p][t]
                     full_queue[p].put(index)
                     done_buf[p] = done_buf[p][T:]

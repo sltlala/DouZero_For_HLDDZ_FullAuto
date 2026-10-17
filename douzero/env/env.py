@@ -22,7 +22,7 @@ class Env:
     """
     Doudizhu multi-agent wrapper
     """
-    def __init__(self, objective):
+    def __init__(self, objective, model_type="resnet"):
         """
         Objective is wp/adp. It indicates whether considers
         bomb in reward calculation. Here, we use dummy agents.
@@ -33,8 +33,12 @@ class Env:
         to play. For each move, we tell the corresponding
         dummy player which action to play, then the player
         will perform the actual action in the game engine.
+
+        model_type: 观测编码类型，必须与实际训练的模型一致
+        （'old' 对应 LSTM，'resnet' 对应 ResnetModel，'general' 对应 GeneralModel）。
         """
         self.objective = objective
+        self.model_type = model_type
 
         # Initialize players
         # We use three dummy player for the target position
@@ -43,7 +47,8 @@ class Env:
             self.players[position] = DummyAgent(position)
 
         # Initialize the internal environment
-        self._env = GameEnv(self.players)
+        # 自对局时引擎不能启用宿主启发式（会改写模型动作，污染 DMC 训练数据）
+        self._env = GameEnv(self.players, heuristics=False)
 
         self.infoset = None
 
@@ -70,7 +75,7 @@ class Env:
         self._env.card_play_init(card_play_data)
         self.infoset = self._game_infoset
 
-        return get_obs(self.infoset)
+        return get_obs(self.infoset, self.model_type)
 
     def step(self, action):
         """
@@ -81,8 +86,11 @@ class Env:
         dictionary that is reserved to pass useful information.
         """
         assert action in self.infoset.legal_actions
+        # 必须把「该谁出」和「出什么」一起交给引擎：宿主的 GameEnv.step(position, action)
+        # 只有在收到 position 时才会正确推进状态（旧代码 self._env.step() 不传参，
+        # 引擎会把 position 当成 None，永远得到空动作，整局卡死）。
         self.players[self._acting_player_position].set_action(action)
-        self._env.step()
+        self._env.step(self._acting_player_position, action)
         self.infoset = self._game_infoset
         done = False
         reward = 0.0
@@ -91,7 +99,7 @@ class Env:
             reward = self._get_reward()
             obs = None
         else:
-            obs = get_obs(self.infoset)
+            obs = get_obs(self.infoset, self.model_type)
         return obs, reward, done, {}
 
     def _get_reward(self):

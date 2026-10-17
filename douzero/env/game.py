@@ -2,7 +2,6 @@ from copy import deepcopy
 from . import move_detector as md, move_selector as ms
 from .move_generator import MovesGener
 import random
-from search_utility import search_actions, select_optimal_path, check_42
 from .move_detector import get_move_type
 
 EnvCard2RealCard = {3: '3', 4: '4', 5: '5', 6: '6', 7: '7',
@@ -20,13 +19,23 @@ AllEnvCard = [3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7,
 bombs = [[3, 3, 3, 3], [4, 4, 4, 4], [5, 5, 5, 5], [6, 6, 6, 6],
          [7, 7, 7, 7], [8, 8, 8, 8], [9, 9, 9, 9], [10, 10, 10, 10],
          [11, 11, 11, 11], [12, 12, 12, 12], [13, 13, 13, 13], [14, 14, 14, 14],
-         [17, 17, 17, 17], [30, 20]]
+         [17, 17, 17, 17], [20, 30]]
+
+# 王炸在不同模块里可能写成 [20, 30] 也可能写成 [30, 20]（move_generator 生成的是 [20, 30]），
+# 统一排序后再比较，否则王炸不会被计入 bomb_num，导致 ADP 回报与炸弹特征被低估。
+bomb_keys = {tuple(sorted(b)) for b in bombs}
 
 
 class GameEnv(object):
 
-    def __init__(self, players, players2=None):
-
+    def __init__(self, players, players2=None, heuristics=True):
+        """
+        players: 线上对局时是 [我的位置字符串, 我的 AI 智能体]；
+                 自对局训练时可以是 {位置: DummyAgent}（三个位置都由外部喂动作）。
+        heuristics: 是否启用「可直接出完路径搜索 / 炸弹胜率风控」等宿主启发式。
+                 线上对局保持 True；DMC 自对局必须传 False，否则会改写模型的动作。
+        """
+        self.heuristics = heuristics
         self.game_infoset = None
         self.card_play_action_seq = []
 
@@ -149,6 +158,10 @@ class GameEnv(object):
         return False
 
     def step(self, position, action=None, update=True):  # 是否更新 info set
+        # 延迟导入：search_utility 反向依赖 douzero.env，若在此模块顶层导入会形成循环导入，
+        # 导致「先 import search_utility」或 `python search_utility.py` 直接 ImportError。
+        from search_utility import search_actions, select_optimal_path, check_42
+
         if action is None:
             action = []
             win_rate = 0
@@ -160,36 +173,38 @@ class GameEnv(object):
                     action, actions_confidence, action_list = self.players2[1].act(self.game_infoset)
                 win_rate = actions_confidence
 
-                # 对直接出完情况做特判
-                # print("正在检测可直接出完出法")
-                # print()
-                if len(action) != len(self.game_infoset.player_hand_cards):
-                    for l_action, l_score in action_list:
-                        if len(l_action) == len(self.game_infoset.player_hand_cards):
-                            m_type = md.get_move_type(l_action)
-                            if m_type["type"] not in [md.TYPE_14_4_22, md.TYPE_13_4_2]:
-                                action = l_action
-                                win_rate = 10000
-                                print("检测到可直接出完出法")
-                    last_two_moves = self.get_last_two_moves()
-                    rival_move = None
-                    if last_two_moves[0]:
-                        rival_move = last_two_moves[0]
-                    elif last_two_moves[1]:
-                        rival_move = last_two_moves[1]
-                    if win_rate != 10000:
-                        path_list = []
-                        search_actions(self.game_infoset.player_hand_cards, self.game_infoset.other_hand_cards,
-                                       path_list,
-                                       rival_move=rival_move)
-                        if len(path_list) > 0:
-                            path = select_optimal_path(path_list)
-                            if not check_42(path):
-                                if action != path[0]:
-                                    print("检测到可直接出完路径:", self.action_to_str(action), "->",
-                                          self.path_to_str(path))
-                                    action = path[0]
-                                    win_rate = 20000
+                # 以下都是给「真人玩家/线上对局」用的启发式兜底。
+                # 自对局训练时必须关掉（heuristics=False）：否则引擎会改写模型选择的动作，
+                # 而 DMC 的 buffer 里记的仍是模型原本的动作，训练数据与实际对局不一致。
+                if self.heuristics:
+                    # 对直接出完情况做特判
+                    if len(action) != len(self.game_infoset.player_hand_cards):
+                        for l_action, l_score in action_list:
+                            if len(l_action) == len(self.game_infoset.player_hand_cards):
+                                m_type = md.get_move_type(l_action)
+                                if m_type["type"] not in [md.TYPE_14_4_22, md.TYPE_13_4_2]:
+                                    action = l_action
+                                    win_rate = 10000
+                                    print("检测到可直接出完出法")
+                        last_two_moves = self.get_last_two_moves()
+                        rival_move = None
+                        if last_two_moves[0]:
+                            rival_move = last_two_moves[0]
+                        elif last_two_moves[1]:
+                            rival_move = last_two_moves[1]
+                        if win_rate != 10000:
+                            path_list = []
+                            search_actions(self.game_infoset.player_hand_cards, self.game_infoset.other_hand_cards,
+                                           path_list,
+                                           rival_move=rival_move)
+                            if len(path_list) > 0:
+                                path = select_optimal_path(path_list)
+                                if not check_42(path):
+                                    if action != path[0]:
+                                        print("检测到可直接出完路径:", self.action_to_str(action), "->",
+                                              self.path_to_str(path))
+                                        action = path[0]
+                                        win_rate = 20000
         else:
             action_list = [[action, 0]]
             win_rate = 0
@@ -198,7 +213,7 @@ class GameEnv(object):
             if len(action) > 0:
                 self.last_pid = self.acting_player_position
 
-            if action in bombs:
+            if tuple(sorted(action)) in bomb_keys:
                 self.bomb_num += 1
 
             self.last_move_dict[
@@ -286,8 +301,11 @@ class GameEnv(object):
 
     def update_acting_player_hand_cards(self, action):
         if action != []:
-            # 更新玩家手牌，删除对应的牌
-            if self.acting_player_position == self.players[0]:
+            # players 是 [我的位置, 智能体] 时，只有「我」的手牌是精确的（另两家是整副牌减出来的），
+            # 只能按张数删除；players 是 dict（自对局，三家手牌都真实）时全部按牌面精确删除。
+            my_position = self.players[0] if isinstance(self.players, (list, tuple)) else None
+            if my_position is None or self.acting_player_position == my_position:
+                # 更新玩家手牌，删除对应的牌
                 for card in action:
                     self.info_sets[self.acting_player_position].player_hand_cards.remove(card)
             # 更新另外两个玩家手牌，删除相同数量的牌

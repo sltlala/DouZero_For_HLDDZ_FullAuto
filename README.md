@@ -172,6 +172,7 @@ pytest                              # 全量回归（18 个用例）
 python tests/test_regressions.py    # 核心逻辑专项
 python tests/test_robustness.py     # 健壮性专项
 python tests/dmc_smoke.py           # 真实跑一次 DMC 训练（CPU 约 10s）
+python tests/env_probe.py           # 环境自检：窗口/权限/截图/模板识别（需管理员）
 ```
 
 训练入口在 `douzero/dmc`，安装后直接用命令行的方式：

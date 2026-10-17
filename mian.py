@@ -199,13 +199,26 @@ class Worker(QThread):
             print("现在是手动模式")
         self.loop_sign = True
         self.stop_sign = False
-        self.run_threshold()
-        while not self.stop_sign:
-            self.detect_start_btn()
-            self.init_interface.emit(1)
-            self.before_start()
-            self.init_cards()
-            time.sleep(2)
+        try:
+            self.run_threshold()
+            while not self.stop_sign:
+                try:
+                    self.detect_start_btn()
+                    self.init_interface.emit(1)
+                    self.before_start()
+                    self.init_cards()
+                except Exception:
+                    # 单局内的识别/解析异常不应该让整个 QThread（乃至进程）崩溃
+                    traceback.print_exc()
+                    print("本局处理异常，5 秒后重试")
+                    self.RunGame = False
+                    self.init_interface.emit(1)
+                    time.sleep(5)
+                time.sleep(2)
+        except Exception:
+            traceback.print_exc()
+        finally:
+            print("自动化线程结束")
 
     def run_threshold(self):
         # 阈值已由主线程在点击「手动/自动」时写盘（MyPyQT_Form.write_threshold），
@@ -323,27 +336,54 @@ class Worker(QThread):
         else:
             pass
 
+    def _hand_card_count(self):
+        try:
+            return len(self.find_my_cards())
+        except Exception:
+            return 0
+
+    def _in_game_signal(self):
+        """是否已经在游戏场内。
+
+        旧实现只认聊天图标（chat）：新版客户端在发牌/对局过程中聊天入口可能被隐藏，
+        实测全图最高只有 0.46，导致明明已经开局却永远停在「未进入游戏」。
+        这里改用更可靠的信号：手牌数量 / 底牌数量 / 聊天入口 / 快速开始。
+        """
+        if self._hand_card_count() in (17, 20):
+            return True
+        if len(self.find_three_cards()) == 3:
+            return True
+        if helper.LocateOnScreen("chat", region=(1302, 744, 117, 56), confidence=0.7) is not None:
+            return True
+        if helper.LocateOnScreen("quick_start", region=self.GeneralBtnPos, confidence=0.7) is not None:
+            return True
+        return False
+
+    def _game_started_signal(self):
+        """是否已经发牌、可以对局。"""
+        if self._hand_card_count() in (17, 20):
+            return True
+        if len(self.find_three_cards()) == 3:
+            return True
+        return helper.LocateOnScreen("laotou", region=self.LandlordCardsPos, confidence=0.7) is not None
+
     def before_start(self):
         self.in_game_flag = False
         print("未进入游戏", end='')
-        in_game = helper.LocateOnScreen("chat", region=(1302, 744, 117, 56))
-        while in_game is None:
-            time.sleep(1)
+        while not self._in_game_signal():
+            time.sleep(0.5)
             print(".", end="")
             self.state_display.emit("未进入游戏")
-            in_game = helper.LocateOnScreen("chat", region=(1302, 744, 117, 56))
             self.detect_start_btn()
         self.in_game_flag = True
         time.sleep(0.3)
         if self.in_game_flag:
             print("\n在游戏场内")
             print("游戏未开始", end="")
-            laotou = helper.LocateOnScreen("laotou", region=self.LandlordCardsPos)
-            while laotou is None:
+            while not self._game_started_signal():
                 time.sleep(0.5)
                 print(".", end="")
                 self.state_display.emit("游戏未开始")
-                laotou = helper.LocateOnScreen("laotou", region=self.LandlordCardsPos)
                 self.detect_start_btn()
 
             print("\n开始游戏")
@@ -619,6 +659,9 @@ class Worker(QThread):
         # 其他玩家手牌（整副牌减去玩家手牌，后续再减掉历史出牌）
         self.other_hand_cards = []
         self.three_cards_env = []
+        # 其余手牌在被执行牌前先清空，避免沿用上一局的残留
+        self.three_cards_real = ""
+        self.user_hand_cards_real = ""
         # 开局时三个玩家的手牌
         self.card_play_data_list = {}
 

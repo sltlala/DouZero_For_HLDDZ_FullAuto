@@ -469,11 +469,11 @@ class Worker(QThread):
                         if jiaodizhu_btn is not None:
                             have_bid = True
                             if win_rate > self.BidThresholds[0]:
-                                helper.ClickOnImage("jiaodizhu_btn", region=self.GeneralBtnPos)
+                                self.click_action("jiaodizhu_btn", True, self.GeneralBtnPos)
                                 print("\n叫地主")
 
                             else:
-                                helper.ClickOnImage("bujiao_btn", region=self.GeneralBtnPos)
+                                self.click_action("bujiao_btn", False, self.GeneralBtnPos)
                                 print("\n不叫地主")
                         elif qiangdizhu_btn is not None:
                             is_stolen = 1
@@ -482,10 +482,10 @@ class Worker(QThread):
                             else:
                                 threshold_index = 2
                             if win_rate > self.BidThresholds[threshold_index]:
-                                helper.ClickOnImage("qiangdizhu_btn", region=self.GeneralBtnPos)
+                                self.click_action("qiangdizhu_btn", True, self.GeneralBtnPos)
                                 print("\n抢地主")
                             else:
-                                helper.ClickOnImage("buqiang_btn", region=self.GeneralBtnPos)
+                                self.click_action("buqiang_btn", False, self.GeneralBtnPos)
                                 print("\n不抢地主")
                             have_bid = True
 
@@ -544,16 +544,16 @@ class Worker(QThread):
                                 print("超级加倍")
                                 self.initial_multiply = 4
                             else:
-                                helper.ClickOnImage("jiabei_btn", region=self.GeneralBtnPos, confidence=0.9)
+                                self.click_action("jiabei_btn", True, self.GeneralBtnPos, confidence=0.9)
                                 print("加倍")
                                 self.initial_multiply = 2
                         elif win_rate > JiabeiThreshold[1]:
                             print("加倍")
-                            helper.ClickOnImage("jiabei_btn", region=self.GeneralBtnPos, confidence=0.9)
+                            self.click_action("jiabei_btn", True, self.GeneralBtnPos, confidence=0.9)
                             self.initial_multiply = 2
                         else:
                             print("不加倍")
-                            helper.ClickOnImage("bujiabei_btn", region=self.GeneralBtnPos)
+                            self.click_action("bujiabei_btn", False, self.GeneralBtnPos)
                             self.initial_multiply = 0
                         break
                     self.detect_start_btn()
@@ -727,26 +727,29 @@ class Worker(QThread):
         self.user_hand_cards_real = self.find_my_cards()
         hand_tries = 0
         expect_hand = 20 if self.user_position_code == 1 else 17
+        hand_deadline = time.time() + 10
         while len(self.user_hand_cards_real) != expect_hand:
             if not self.RunGame:
                 break
             time.sleep(0.2)
             self.user_hand_cards_real = self.find_my_cards()
             hand_tries += 1
+            got = len(self.user_hand_cards_real)
+            if time.time() > hand_deadline:
+                # 10 秒都凑不齐开局张数 ⇒ 本局已经在打了（中途接管），等下一局。
+                # 用时间判定而不是“张数不变”，因为识别张数会在 14/15 之间抖动。
+                print("\n当前对局已进行中（手牌 %d 张，期望 %d），无法中途接管；等待本局结束"
+                      % (got, expect_hand))
+                self.state_display.emit("等待下一局")
+                while self.RunGame and self.find_my_cards():
+                    time.sleep(2)
+                    self.detect_start_btn()
+                self.RunGame = False
+                return
             if hand_tries % 10 == 0:
-                got = len(self.user_hand_cards_real)
                 print("\n手牌识别异常（期望 %d 张，实际 %d 张: %s）"
                       % (expect_hand, got, self.user_hand_cards_real))
                 self.save_debug_shot("my_cards_%d" % got)
-                if got < expect_hand - 2:
-                    # 中途接管：本局已经打了一会儿，手牌不足开局数量，等下一局
-                    print("\n当前对局已进行中（手牌 %d 张），无法中途接管；等待本局结束" % got)
-                    self.state_display.emit("等待下一局")
-                    while self.RunGame and self.find_my_cards():
-                        time.sleep(2)
-                        self.detect_start_btn()
-                    self.RunGame = False
-                    return
             self.detect_start_btn()
         self.user_hand_cards_env = [RealCard2EnvCard[c] for c in list(self.user_hand_cards_real)]
 
@@ -844,6 +847,14 @@ class Worker(QThread):
                                 yaobuqi = helper.LocateOnScreen("yaobuqi", region=self.GeneralBtnPos, confidence=0.7)
                                 buchu = helper.LocateOnScreen("buchu", region=self.MPassPos)
                                 self.detect_start_btn()
+                                # 模板一直认不出按钮时，改用“按钮排布”点「不出」
+                                # （从左到右：出牌 / 不出 / 提示，只有一个按钮时它就是要不起）
+                                if time.time() - pass_wait_start > 3:
+                                    boxes = self.find_action_buttons()
+                                    if boxes:
+                                        self.click_button_by_layout(1 if len(boxes) >= 2 else 0)
+                                        print("\n按按钮位置点击「不出」（共 %d 个按钮）" % len(boxes))
+                                        break
                                 if not pass_diag_done and time.time() - pass_wait_start > 10:
                                     pass_diag_done = True
                                     print("\n[提示] 找不到「不出/要不起」按钮：本机按钮外观与 pics/ 模板不符，"
@@ -853,9 +864,9 @@ class Worker(QThread):
 
                             if not self.my_pass_sign:
                                 if pass_btn is not None:
-                                    helper.ClickOnImage("pass_btn", region=self.PassBtnPos, confidence=0.7)
+                                    self.click_action("pass_btn", False, self.PassBtnPos)
                                 if yaobuqi is not None:
-                                    helper.ClickOnImage("yaobuqi", region=self.GeneralBtnPos, confidence=0.7)
+                                    self.click_action("yaobuqi", False, self.GeneralBtnPos)
                                 if buchu is not None:
                                     print("你们太牛X！ 我要不起")
                                     time.sleep(0.5)
@@ -864,35 +875,36 @@ class Worker(QThread):
                                 self.my_pass_sign = False
                             time.sleep(0.1)
                         else:
+                            # 先选牌，再点「出牌」。click_action 会先试模板，认不出就按
+                            # 按钮排布点最左边那个（出牌/叫地主），避免死等模板。
+                            before_hand = len(self.find_my_cards())
                             self.click_cards(action_message["action"])
-                            play_card = helper.LocateOnScreen("play_card", region=self.PassBtnPos, confidence=0.7)
-                            play_wait_start = time.time()
-                            play_diag_done = False
-                            while play_card is None:
-                                if not self.RunGame or not self.auto_sign:
-                                    break
-                                time.sleep(0.2)
-                                play_card = helper.LocateOnScreen("play_card", region=self.PassBtnPos, confidence=0.7)
-                                self.detect_start_btn()
-                                if not play_diag_done and time.time() - play_wait_start > 10:
-                                    play_diag_done = True
-                                    print("\n[提示] 找不到「出牌」按钮：本机按钮外观与 pics/ 模板不符，"
-                                          "请用 `python tools/grab_template.py play_card 150 52` 重新采集模板")
-                                    self._diag_buttons()
-                                    self.save_debug_shot("play_wait")
                             if first_run:
                                 time.sleep(0.5)
-                            try:
-                                helper.ClickOnImage("play_card", region=self.PassBtnPos, confidence=0.7)
-                            except Exception as e:
-                                print("没找到出牌按钮")
-                            print("点击出牌按钮")
-                            time.sleep(0.2)
-                            play_card = helper.LocateOnScreen("play_card", region=self.PassBtnPos, confidence=0.7)
-                            if play_card is not None:
+                            play_wait_start = time.time()
+                            while True:
+                                if not self.RunGame or not self.auto_sign:
+                                    break
+                                if self.click_action("play_card", True, self.PassBtnPos):
+                                    print("点击出牌按钮")
+                                    break
+                                if time.time() - play_wait_start > 15:
+                                    print("\n[提示] 15 秒内没点到「出牌」按钮，已存图排查")
+                                    self._diag_buttons()
+                                    self.save_debug_shot("play_wait")
+                                    break
+                                time.sleep(0.2)
+                                self.detect_start_btn()
+                            # 校验：出牌成功后手牌必须减少，否则说明选牌/点击没生效，重试
+                            for attempt in range(3):
+                                time.sleep(0.8)
+                                now_hand = len(self.find_my_cards())
+                                if now_hand < before_hand:
+                                    break
+                                print("\n出牌未生效（手牌仍 %d 张），重试选牌并点出牌" % now_hand)
                                 self.click_cards(action_message["action"])
-                                time.sleep(0.5)
-                                helper.ClickOnImage("play_card", region=self.PassBtnPos, confidence=0.7)
+                                time.sleep(0.4)
+                                self.click_action("play_card", True, self.PassBtnPos)
 
                             self.my_played_cards_env = [RealCard2EnvCard[c] for c in list(action_message["action"])]
                             self.my_played_cards_env.sort()
@@ -1020,6 +1032,10 @@ class Worker(QThread):
                         time.sleep(0.2)
                     pass_flag = helper.LocateOnScreen('buchu', region=self.RPassPos)
                     rightCards = self.find_other_cards(self.RPlayedCardsPos)
+                    # 本机“不出”标记模板匹配不上：改用“是否已轮到我”反推下家不出
+                    if pass_flag is None and len(rightCards) == 0 and self._my_turn_by_buttons():
+                        print("\n下家不出（已轮到我出牌）")
+                        pass_flag = "layout"
                     self.detect_start_btn()
 
                 if pass_flag is None:
@@ -1074,6 +1090,10 @@ class Worker(QThread):
                         time.sleep(0.2)
                     pass_flag = helper.LocateOnScreen('buchu', region=self.LPassPos)
                     leftCards = self.find_other_cards(self.LPlayedCardsPos)
+                    # 本机“不出”标记模板匹配不上：改用“是否已轮到我”反推上家不出
+                    if pass_flag is None and len(leftCards) == 0 and self._my_turn_by_buttons():
+                        print("\n上家不出（已轮到我出牌）")
+                        pass_flag = "layout"
                     self.detect_start_btn()
 
                 if pass_flag is None:
@@ -1246,6 +1266,87 @@ class Worker(QThread):
         except Exception as e:
             print("\n[诊断] 失败: %s" % e)
 
+    def find_action_buttons(self):
+        """在当前按钮区找出一排按钮，返回按 x 排序的 [(x, y, w, h), ...]（画布坐标）。
+
+        不依赖模板外观：本机客户端（单机模式）的按钮与 pics/ 里的旧图对不上
+        （匹配分只有 0.25~0.59），但按钮本身是“一排亮色圆角矩形”，
+        用高饱和高亮连通域 + 尺寸/长宽比过滤即可稳定定位。
+        实测布局（从左到右）：出牌/叫地主、不出/不叫、提示。
+        """
+        try:
+            img, _ = helper.Screenshot()
+            if img is None:
+                return []
+            bgr = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
+            x0, y0, w0, h0 = self.PassBtnPos
+            crop = bgr[y0:y0 + h0, x0:x0 + w0]
+            if crop.size == 0:
+                return []
+            hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+            mask = cv2.inRange(hsv, np.array((0, 120, 150)), np.array((180, 255, 255)))
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+            n, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+            boxes = []
+            for i in range(1, n):
+                x, y, w, h, area = stats[i]
+                if area < 2000 or h < 30 or h > 100 or w < 60 or w > 400:
+                    continue
+                if not (1.2 <= w / float(h) <= 6):
+                    continue
+                boxes.append((int(x) + x0, int(y) + y0, int(w), int(h)))
+            boxes.sort()
+            if len(boxes) < 2:
+                return boxes
+            # 只保留同一水平线上的按钮（y 中心相差不超过按钮高度的一半）
+            mid = boxes[0][1] + boxes[0][3] / 2.0
+            boxes = [b for b in boxes if abs(b[1] + b[3] / 2.0 - mid) <= max(b[3] for b in boxes) * 0.6]
+            return boxes
+        except Exception:
+            return []
+
+    def click_button_by_layout(self, index):
+        """按按钮排布顺序点击：0=出牌/叫地主，1=不出/不叫，2=提示。"""
+        boxes = self.find_action_buttons()
+        if not boxes:
+            return False
+        idx = min(max(index, 0), len(boxes) - 1)
+        x, y, w, h = boxes[idx]
+        helper.LeftClick2((x + w // 2, y + h // 2))
+        return True
+
+    def click_action(self, template, positive=True, region=None, confidence=0.7):
+        """点某个动作按钮：先按模板匹配，模板认不出时按“按钮排布”兜底。
+
+        positive=True 取左边那个（出牌/叫地主/抢地主/加倍），False 取中间那个
+        （不出/不叫/不抢/不加倍）。
+        """
+        region = region or self.PassBtnPos
+        try:
+            if helper.LocateOnScreen(template, region=region, confidence=confidence) is not None:
+                helper.ClickOnImage(template, region=region, confidence=confidence)
+                return True
+        except Exception:
+            pass
+        if self.click_button_by_layout(0 if positive else 1):
+            print("（按钮模板未匹配，按位置点击：%s）" % ("左" if positive else "中"))
+            return True
+        return False
+
+    def _my_turn_by_buttons(self, min_interval=1.0):
+        """用“出牌/不出/提示 按钮是否出现”判断是否已经轮到我（不依赖模板）。
+
+        对手“不出”的标记模板（buchu）在本机匹配不上，于是改用反推：
+        对手区没出牌、而我的动作按钮已经出现 ⇒ 对手一定是不出。
+        截图+HSV 处理有开销，按 min_interval 节流。
+        """
+        now = time.time()
+        if now - getattr(self, "_last_btn_check", 0.0) < min_interval:
+            return getattr(self, "_last_btn_state", False)
+        self._last_btn_check = now
+        self._last_btn_state = bool(self.find_action_buttons())
+        return self._last_btn_state
+
     def find_three_cards(self):
         """识别三张底牌。
 
@@ -1309,17 +1410,22 @@ class Worker(QThread):
             if res2 is not None:
                 pos = res1[0] + 6, res1[1] + 7
 
-            # 优先用实际识别到的每张牌 x 坐标：手牌张数变化时游戏会改变牌间距，
-            # 固定 45.6 只能近似；y 仍用 up_left 推导，保持原有点击高度。
+            # 每张牌的可点击点：用识别到的牌框中心。
+            # 旧实现用固定 "牌的 y + 100"，而本机手牌高度只有 ~40px，
+            # y+100 会落到牌下面，点击等于没点（表现为“出牌失败”）。
             img0, _ = helper.Screenshot()
             detail = []
             if img0 is not None:
                 img0 = cv2.cvtColor(np.asarray(img0), cv2.COLOR_RGB2BGR)
                 detail = self.find_cards_detail(img0, self.MyHandCardsPos, mark="m")
             if len(detail) == num:
-                pos_list = [(d[1], pos[1]) for d in detail]
+                pos_list = [(d[1], d[2], d[3], d[4]) for d in detail]
             else:
-                pos_list = [(int(pos[0] + i * space), pos[1]) for i in range(num)]
+                cy = self.MyHandCardsPos[1] + self.MyHandCardsPos[3] // 2
+                pos_list = [(int(pos[0] + i * space), cy - 20, 40, 40) for i in range(num)]
+
+            def _point(entry):
+                return (entry[0] + entry[2] // 2, entry[1] + entry[3] // 2)
 
             # 将两个列表合并转为字典
             cards_dict = defaultdict(list)
@@ -1330,18 +1436,22 @@ class Worker(QThread):
             remove_dict = {key: [] for key in cards_dict.keys()}
             # print(cards_dict)
             if out_cards == "DX":
-                helper.LeftClick2((cards_dict["X"][0][0] + 20, 650))
+                helper.LeftClick2(_point(cards_dict["X"][0]))
                 time.sleep(0.5)
 
             else:
                 for i in out_cards:
-                    cars_pos = cards_dict[i][-1][0:2]
+                    cars_pos = cards_dict[i][-1]
 
                     # print("准备点击的牌：", cards_dict[i])
-                    point = cars_pos[0] + 20, cars_pos[1] + 100
+                    point = _point(cars_pos)
                     img, _ = helper.Screenshot()
                     img = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
-                    check_one = self.find_cards(img=img, pos=(cars_pos[0] - 2, 565, 60, 60), mark="m", confidence=0.8)
+                    check_one = self.find_cards(
+                        img=img,
+                        pos=(max(0, cars_pos[0] - 5), max(0, cars_pos[1] - 5),
+                             cars_pos[2] + 10, cars_pos[3] + 10),
+                        mark="m", confidence=0.8)
                     # print("系统帮你点的牌：", check_one, "你要出的牌：", i)
 
                     if check_one == i and check_one != "D" and check_one != "X":
@@ -1356,7 +1466,7 @@ class Worker(QThread):
                     # print("remove_dict", remove_dict)
                 img, _ = helper.Screenshot()
                 img = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
-                check_cards = self.find_cards(img, (180, 590, 1050, 90), mark="m")
+                check_cards = self.find_cards(img, self.MyHandCardsPos, mark="m")
                 for i in out_cards:
                     cards = cards.replace(i, "", 1)
                 # print("检查剩的牌： ", check_cards, "应该剩的牌： ", cards)
@@ -1366,9 +1476,9 @@ class Worker(QThread):
                     # print("系统多点的牌： ", cards)
                     for n in cards:
                         # print("字典里还剩的牌： ", cards_dict)
-                        cars_pos2 = cards_dict[n][-1][0:2]
+                        cars_pos2 = cards_dict[n][-1]
                         # print("准备点回来的牌：", cars_pos2)
-                        point2 = cars_pos2[0] + 20, cars_pos2[1] + 100
+                        point2 = _point(cars_pos2)
                         helper.LeftClick2(point2)
                         time.sleep(0.1)
                         remove_dict[n].append(cards_dict[n][-1])
@@ -1379,9 +1489,9 @@ class Worker(QThread):
                     # print("系统少点的牌： ", check_cards)
                     for n in check_cards:
                         # print("删除的字典： ", remove_dict)
-                        cars_pos3 = remove_dict[n][0][0:2]
+                        cars_pos3 = remove_dict[n][0]
                         # print("准备再点出去的牌：", cars_pos3)
-                        point3 = cars_pos3[0] + 20, cars_pos3[1] + 100
+                        point3 = _point(cars_pos3)
                         helper.LeftClick2(point3)
                         time.sleep(0.3)
                         remove_dict[n].remove(remove_dict[n][0])
